@@ -1,0 +1,12 @@
+## Interface: 11509
+## Title: GreenWall GuildRoster
+## Notes: Combined roster window for GreenWall-bridged co-guilds.
+## Author: Gabbajoe
+## Version: 1.0.0
+## SavedVariables: GreenWallGuildRosterDB
+## OptionalDeps: GreenWall
+## IconTexture: Interface\AddOns\GreenWallGuildRoster\icon.png
+
+Core.lua
+RosterFrame.lua
+Minimap.lua
