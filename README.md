@@ -27,6 +27,8 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 
   Pick a channel name that isn't likely to collide with anything else on your realm, and make sure it's **identical** in every co-guild's guild info. This must be a different channel than GreenWall's own `GWc` bridge channel — sharing it trips GreenWall's own message-corruption detection.
 
+  You don't need to create the channel yourself. Custom chat channels in WoW are realm-wide and first-come-first-served: whoever's addon joins it first automatically creates it with the name/password you configured, and everyone else's addon just joins the existing one. If the name you picked happens to already be in use by something unrelated, you'll get stuck on a password prompt — if that happens, just pick a more unique name and try again.
+
 ## Installation
 
 1. Copy the `GreenWallGuildRoster` folder into your `Interface/AddOns/` directory.
@@ -44,6 +46,8 @@ Broadcasting only happens when you explicitly ask for it (button, minimap right-
 ## How it works
 
 Each client reads its own guild's full roster (including offline members, which is normally only visible within your own guild) and sends it, chunked to fit chat message limits, as hidden (not shown in any chat window) messages on the shared `GWGRoster` channel. Every other client listening on that channel merges what it receives into a SavedVariables cache, so peer-guild members show up even when nobody from that guild is currently online — the data is just as fresh as the last broadcast.
+
+**Relationship to GreenWall's code:** the channel-join and broadcast/receive logic here is a from-scratch implementation, not code reused from GreenWall. The only thing this addon reads from GreenWall's setup is the `GWp:guildname:tag` lines already present in your Guild Information page, purely to map a tag back to a guild name for display — that's read-only and doesn't touch any of GreenWall's own Lua state. Everything else (joining its own channel, chunking, sending, parsing incoming messages) is independent, specifically so this addon keeps working even if GreenWall's internals change.
 
 ## Known limitations
 
