@@ -4,9 +4,10 @@
 ## Author: Gabbajoe
 ## Version: 1.0.0
 ## SavedVariables: GreenWallGuildRosterDB
-## OptionalDeps: GreenWall
+## Dependencies: GreenWall
 ## IconTexture: Interface\AddOns\GreenWallGuildRoster\icon.png
 
+Locale.lua
 Core.lua
 RosterFrame.lua
 Minimap.lua

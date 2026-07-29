@@ -15,39 +15,35 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - Right-click a name to whisper or invite
 - Minimap button (drag to reposition, left-click toggles the window, right-click broadcasts)
 - Tracks and displays how long ago you last broadcast your own roster
+- Self-declared cross-guild alt links (`/gwgr setmain <name>`) show "(Alt of X)" next to a twink in another co-guild
+- Automatic background sync once you've made first contact (see How it works)
 
 ## Requirements
 
-- [GreenWall](https://www.curseforge.com/wow/addons/greenwall) already set up and working between your co-guilds
-- One additional line in the **Guild Information** page of **every** co-guild, in addition to GreenWall's own `GWc`/`GWp` lines:
-
-  ```
-  GWGRoster:SomeUniqueChannelName:SomePassword
-  ```
-
-  Pick a channel name that isn't likely to collide with anything else on your realm, and make sure it's **identical** in every co-guild's guild info. This must be a different channel than GreenWall's own `GWc` bridge channel — sharing it trips GreenWall's own message-corruption detection.
-
-  You don't need to create the channel yourself. Custom chat channels in WoW are realm-wide and first-come-first-served: whoever's addon joins it first automatically creates it with the name/password you configured, and everyone else's addon just joins the existing one. If the name you picked happens to already be in use by something unrelated, you'll get stuck on a password prompt — if that happens, just pick a more unique name and try again.
+- [GreenWall](https://www.curseforge.com/wow/addons/greenwall-revived) (the actively maintained "Revived" fork, v1.12+) already set up and working between your co-guilds. It's a hard dependency, not optional - this addon uses GreenWall's own `GreenWallAPI` to ride its already-established confederation channel, so there's no extra channel/password to configure.
 
 ## Installation
 
 1. Copy the `GreenWallGuildRoster` folder into your `Interface/AddOns/` directory.
-2. Add the `GWGRoster:` line above to the Guild Information page of every co-guild.
-3. `/reload`.
+2. `/reload`. No guild-info configuration needed beyond GreenWall's own setup.
 
 ## Usage
 
 - `/gwgr` — open/close the roster window
-- `/gwgr broadcast` — send your guild's current roster to the other co-guilds
-- `/gwgr status` — show the current channel/tag your addon is using
-
-Broadcasting only happens when you explicitly ask for it (button, minimap right-click, or the slash command) — there is no automatic background sending. This isn't a corner we cut; recent WoW client builds treat `SendChatMessage` as a protected function that can only be called from a direct user action, specifically to prevent addons from silently automating chat. Click **Broadcast** (or right-click the minimap button) every so often so the other guild sees a reasonably fresh roster. The window shows how long ago your last broadcast was as a reminder.
+- `/gwgr broadcast` — send your guild's current roster to the other co-guilds (via GreenWall's confederation channel, manual)
+- `/gwgr status` — show GreenWallAPI availability and your own tag
+- `/gwgr setmain <name>` — mark the character you're on as an alt of `<name>` (run this on the twink); leave the name off to clear it
 
 ## How it works
 
-Each client reads its own guild's full roster (including offline members, which is normally only visible within your own guild) and sends it, chunked to fit chat message limits, as hidden (not shown in any chat window) messages on the shared `GWGRoster` channel. Every other client listening on that channel merges what it receives into a SavedVariables cache, so peer-guild members show up even when nobody from that guild is currently online — the data is just as fresh as the last broadcast.
+There are two transports, because Classic's client restricts what's available for each:
 
-**Relationship to GreenWall's code:** the channel-join and broadcast/receive logic here is a from-scratch implementation, not code reused from GreenWall. The only thing this addon reads from GreenWall's setup is the `GWp:guildname:tag` lines already present in your Guild Information page, purely to map a tag back to a guild name for display — that's read-only and doesn't touch any of GreenWall's own Lua state. Everything else (joining its own channel, chunking, sending, parsing incoming messages) is independent, specifically so this addon keeps working even if GreenWall's internals change.
+1. **Manual channel broadcast** (`Broadcast`): each client reads its own guild's full roster (including offline members, normally only visible within your own guild) and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
+2. **Automatic background sync**: once a client has learned at least one online member's name from a peer co-guild (via #1), it whispers its own roster data to a rotating handful of them every few minutes and on roster changes, using `SendAddonMessage` — silent, invisible addon-to-addon data, not chat. This normally isn't gated behind a user action... except Classic disables `SendAddonMessage`'s `CHANNEL` target specifically ("to prevent players communicating over custom chat channels" per Blizzard's own docs), so it targets `WHISPER` at known-online peers instead. No handshake or reachability check first: if a target has logged off or doesn't have the addon, the whisper just goes nowhere, harmlessly. Both sides doing this every cycle gives enough redundancy without needing to verify anyone can "answer" first.
+
+So: click Broadcast once to introduce your guild to the other co-guild(s), and it should stay in sync automatically after that. The window shows how long ago your last manual broadcast was, as a reminder in case the automatic sync ever needs a nudge (e.g. after a long period with nobody from a co-guild online).
+
+**Relationship to GreenWall's code:** the broadcast/receive logic here is a from-scratch implementation on top of GreenWall's public `GreenWallAPI`, not code reused from GreenWall's internals. This addon also reads the `GWp:guildname:tag` lines already present in your Guild Information page, purely to map a tag back to a guild name for display — that's read-only and doesn't touch any of GreenWall's own Lua state.
 
 ## Known limitations
 
@@ -58,3 +54,7 @@ Each client reads its own guild's full roster (including offline members, which 
 ## License
 
 MIT, see [LICENSE](LICENSE). The icon is AI-generated artwork made for this project.
+
+## Contributing a translation
+
+Play on a non-English/German client and want zone names translated correctly for your language? See [TRANSLATING.md](TRANSLATING.md) - it's a two-minute in-game export, no research needed.
