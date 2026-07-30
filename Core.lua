@@ -85,56 +85,8 @@ local function RankBadge(rankIndex)
     return '0'
 end
 
--- GetGuildRosterInfo's zone field always comes back pre-localized to the
--- CALLING client's own language - there's no zone ID exposed for other
--- players, and no Blizzard API to translate a zone name back to one.
--- Wire format uses English as the neutral key: a non-English sender
--- reverse-looks-up their local zone text to the English name before
--- sending; a non-English receiver forward-translates the received
--- English name back to their own language for display. Covers the major
--- world zones (source: Warcraft Wiki's LocalizedMapZones) - dungeon/
--- instance names aren't in here and just pass through untranslated,
--- same as before this existed.
-local ZONE_EN_DE = {
-    ['Ashenvale'] = 'Eschental', ['Azshara'] = 'Azshara', ['Darkshore'] = 'Dunkelküste',
-    ['Darnassus'] = 'Darnassus', ['Desolace'] = 'Desolace', ['Durotar'] = 'Durotar',
-    ['Dustwallow Marsh'] = 'Marschen von Dustwallow', ['Felwood'] = 'Teufelswald', ['Feralas'] = 'Feralas',
-    ['Mulgore'] = 'Mulgore', ['Orgrimmar'] = 'Orgrimmar', ['Silithus'] = 'Silithus',
-    ['Stonetalon Mountains'] = 'Steinkrallengebirge', ['Tanaris'] = 'Tanaris', ['Teldrassil'] = 'Teldrassil',
-    ['The Barrens'] = 'Brachland', ['Thousand Needles'] = 'Tausend Nadeln', ['Thunder Bluff'] = 'Donnerfels',
-    ["Un'Goro Crater"] = "Krater von Un'Goro", ['Winterspring'] = 'Winterquell',
-    ['Alterac Mountains'] = 'Alteracgebirge', ['Arathi Highlands'] = 'Arathihochland', ['Badlands'] = 'Ödland',
-    ['Blasted Lands'] = 'Verwüstete Lande', ['Burning Steppes'] = 'Brennende Steppe',
-    ['Deadwind Pass'] = 'Gebirgspass der Totenwinde', ['Dun Morogh'] = 'Dun Morogh', ['Duskwood'] = 'Dämmerwald',
-    ['Elwynn Forest'] = 'Wald von Elwynn', ['Hillsbrad Foothills'] = 'Vorgebirge von Hillsbrad',
-    ['Ironforge'] = 'Eisenschmiede', ['Loch Modan'] = 'Loch Modan', ['Redridge Mountains'] = 'Rotkammgebirge',
-    ['Searing Gorge'] = 'Sengende Schlucht', ['Silverpine Forest'] = 'Silberwald', ['Stormwind City'] = 'Sturmwind',
-    ['Stranglethorn Vale'] = 'Schlingendorntal', ['Swamp of Sorrows'] = 'Sümpfe des Elends',
-    ['The Hinterlands'] = 'Hinterland', ['Tirisfal Glades'] = 'Tirisfal', ['Undercity'] = 'Unterstadt',
-    ['Western Plaguelands'] = 'Westliche Pestländer', ['Westfall'] = 'Westfall', ['Wetlands'] = 'Sumpfland',
-    ['The Deadmines'] = 'Die Todesminen',
-}
-local ZONE_DE_EN = {}
-for en, de in pairs(ZONE_EN_DE) do ZONE_DE_EN[de] = en end
-
--- Sender side: local zone text -> canonical English for the wire.
-local function ToCanonicalZone(zone)
-    if not zone or zone == '' then return zone end
-    if GetLocale() == 'deDE' then
-        return ZONE_DE_EN[zone] or zone
-    end
-    return zone
-end
-
--- Receiver side: canonical English (as received) -> local display text.
-local function FromCanonicalZone(zone)
-    if not zone or zone == '' then return zone end
-    if GetLocale() == 'deDE' then
-        return ZONE_EN_DE[zone] or zone
-    end
-    return zone
-end
-ns.FromCanonicalZone = FromCanonicalZone
+-- Zone translation table (ZONE_EN_DE, ToCanonicalZone/FromCanonicalZone)
+-- moved to ZoneData.lua, exposed as ns.ToCanonicalZone/ns.FromCanonicalZone.
 ns.RankBadge = RankBadge
 
 -- Online members only. A big guild (900+) turned into hundreds of chunked
@@ -210,7 +162,7 @@ local function CollectOwnRoster(forceFull)
                 currentOnlineSet[name] = true
                 local linkedMain = GreenWallGuildRosterDB.mainLinks[name] or ''
                 local badge = RankBadge(rankIndex)
-                onlineRow[name] = strjoin(';', Sanitize(name), classFile or '', tostring(level or 0), Sanitize(ToCanonicalZone(zone)), Sanitize(note), '1', Sanitize(linkedMain), badge)
+                onlineRow[name] = strjoin(';', Sanitize(name), classFile or '', tostring(level or 0), Sanitize(ns.ToCanonicalZone(zone)), Sanitize(note), '1', Sanitize(linkedMain), badge)
             end
         end
     end
@@ -242,7 +194,7 @@ local function CollectOwnRoster(forceFull)
                         name = name:match('^[^-]+') or name
                         if name == prevName then
                             local linkedMain = GreenWallGuildRosterDB.mainLinks[name] or ''
-                            rows[#rows + 1] = strjoin(';', Sanitize(name), classFile or '', tostring(level or 0), Sanitize(ToCanonicalZone(zone)), Sanitize(note), '0', Sanitize(linkedMain), RankBadge(rankIndex))
+                            rows[#rows + 1] = strjoin(';', Sanitize(name), classFile or '', tostring(level or 0), Sanitize(ns.ToCanonicalZone(zone)), Sanitize(note), '0', Sanitize(linkedMain), RankBadge(rankIndex))
                             break
                         end
                     end
@@ -507,6 +459,27 @@ local function EnsureAPIHandler()
     apiHandlerRegistered = true
 end
 
+-- Dungeon/instance names aren't covered by the uiMapID scan /gwgr
+-- exportzones does (confirmed empty after scanning 1-8000 - Classic Era's
+-- C_Map just doesn't register them) - GetInstanceInfo()'s instanceID is
+-- the equivalent stable, locale-neutral key for these instead (same
+-- numbering other instance-tracking addons like Nova Instance Tracker use
+-- for their own hardcoded dungeon list), but it's only readable while
+-- actually standing inside the instance, not brute-forceable ahead of
+-- time. So this just quietly records whatever instance you're in whenever
+-- you zone in - the same zoneExport table fills in with dungeon entries
+-- over ordinary play, on top of whatever /gwgr exportzones already
+-- collected for outdoor zones.
+local function RecordCurrentInstance()
+    local inInstance = IsInInstance()
+    if not inInstance then return end
+    local name, _, _, _, _, _, _, instanceID = GetInstanceInfo()
+    if not instanceID or instanceID == 0 or not name or name == '' then return end
+    GreenWallGuildRosterDB.zoneExport = GreenWallGuildRosterDB.zoneExport or { locale = GetLocale(), map = {} }
+    GreenWallGuildRosterDB.zoneExport.locale = GetLocale()
+    GreenWallGuildRosterDB.zoneExport.map[instanceID] = name
+end
+
 local frame = CreateFrame('Frame')
 frame:RegisterEvent('ADDON_LOADED')
 frame:RegisterEvent('PLAYER_ENTERING_WORLD')
@@ -530,6 +503,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
     elseif event == 'PLAYER_ENTERING_WORLD' then
         C_GuildInfo.GuildRoster()
         EnsureAPIHandler()
+        RecordCurrentInstance()
         if not C_AddOns.IsAddOnLoaded('GreenWall') then
             print('|cffff3333GreenWallGuildRoster|r: ' .. ns.L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall - Revived" from CurseForge) to bridge with your co-guilds.'])
         end
@@ -600,22 +574,34 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
         -- language, keyed by uiMapID - a stable, locale-neutral ID Blizzard
         -- assigns itself, unlike zone text which only exists pre-localized
         -- with no ID exposed anywhere in GetGuildRosterInfo. Brute-force
-        -- range and technique lifted straight from HereBeDragons (bundled
-        -- with the installed GuildMap addon), which does this same 2500-ID
-        -- scan on every load in this exact client - proven cheap and safe,
-        -- not guessed. Two exports (English + another language) sharing the
-        -- same IDs is what actually builds a correct EN<->XX zone table,
-        -- instead of researching names by hand and getting them wrong.
-        local map = {}
+        -- technique lifted from HereBeDragons (bundled with the installed
+        -- GuildMap addon), which does this same kind of ID scan on every
+        -- load in this exact client - proven cheap and safe, not guessed.
+        -- Range widened past HereBeDragons' own 2500 cutoff: that library
+        -- only cares about outdoor zones for coordinate math, but the first
+        -- real export here came back with only outdoor zones/cities/
+        -- battlegrounds - no dungeons (Blackrock Depths, Scholomance,
+        -- Stratholme, ...) - meaning those instance map IDs live somewhere
+        -- past 2500. Still a one-shot command, not a per-frame cost, so
+        -- scanning further is cheap insurance either way.
+        -- Two exports (English + another language) sharing the same IDs is
+        -- what actually builds a correct EN<->XX zone table, instead of
+        -- researching names by hand and getting them wrong.
+        -- Merges into whatever's already there rather than replacing it -
+        -- RecordCurrentInstance (see below) may have already collected
+        -- dungeon entries via GetInstanceInfo from ordinary play, and a
+        -- fresh export shouldn't wipe those back out.
+        GreenWallGuildRosterDB.zoneExport = GreenWallGuildRosterDB.zoneExport or { locale = GetLocale(), map = {} }
+        GreenWallGuildRosterDB.zoneExport.locale = GetLocale()
+        local map = GreenWallGuildRosterDB.zoneExport.map
         local count = 0
-        for id = 1, 2500 do
+        for id = 1, 8000 do
             local info = C_Map.GetMapInfo(id)
             if info and info.name and info.name ~= '' then
                 map[id] = info.name
                 count = count + 1
             end
         end
-        GreenWallGuildRosterDB.zoneExport = { locale = GetLocale(), map = map }
         print(('|cff33ff99GreenWallGuildRoster|r: Exported %d zone names for locale "%s" into SavedVariables.'):format(count, GetLocale()))
         print('|cff33ff99GreenWallGuildRoster|r: /reload or log out to flush to disk, then find GreenWallGuildRosterDB.zoneExport in your SavedVariables/GreenWallGuildRoster.lua and send it over.')
     elseif cmd == 'setmain' then

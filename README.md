@@ -6,17 +6,20 @@ A companion addon for [GreenWall](https://github.com/AIE-Guild/GreenWall) that s
 
 ## What it does
 
-GreenWall bridges guild chat between co-guilds, but each guild's roster is still only visible to its own members. This addon adds a second, independent channel just for roster data: every member with the addon periodically shares their own guild's roster (name, level, class, zone, online status), and everyone else's addon merges that into one combined window.
+GreenWall bridges guild chat between co-guilds, but each guild's roster is still only visible to its own members. This addon rides GreenWall's own confederation channel (via its public `GreenWallAPI`) plus a background whisper transport for roster data: every member with the addon periodically shares their own guild's roster (name, level, class, zone, online status, rank), and everyone else's addon merges that into one combined window.
 
-- Native-style roster window: Level, Class icon, Name, Zone, Guild, Status
+- Native-style roster window: Level, Class icon, Name, Zone, Guild, Status, Alt
 - All co-guilds mixed together, sortable by any column (click the header, click again to reverse)
 - Guild column color-codes your own guild vs. the other co-guild(s)
+- Guild Master / Officer crowns next to names, same as the native frame
 - "Show offline" toggle
-- Right-click a name to whisper or invite
-- Minimap button (drag to reposition, left-click toggles the window, right-click broadcasts)
+- Right-click a name to whisper, invite, or copy their name
+- Minimap button (drag to reposition, left-click toggles the window, right-click broadcasts) - can be hidden via Options > AddOns > GreenWall GuildRoster or `/gwgr minimap`
 - Tracks and displays how long ago you last broadcast your own roster
-- Self-declared cross-guild alt links (`/gwgr setmain <name>`) show "(Alt of X)" next to a twink in another co-guild
+- Self-declared cross-guild alt links (`/gwgr setmain <name>`) show under Alt for a twink in another co-guild
 - Automatic background sync once you've made first contact (see How it works)
+- A departed co-guild member (kicked, left, character deleted) gets explicitly cleared out instead of lingering as a stale entry forever
+- English/German UI, auto-detected from your client language - see [TRANSLATING.md](TRANSLATING.md) to help add another
 
 ## Requirements
 
@@ -57,4 +60,4 @@ MIT, see [LICENSE](LICENSE). The icon is AI-generated artwork made for this proj
 
 ## Contributing a translation
 
-Play on a non-English/German client and want zone names translated correctly for your language? See [TRANSLATING.md](TRANSLATING.md) - it's a two-minute in-game export, no research needed.
+Play on a non-English/German client and want zone names translated correctly for your language? See [TRANSLATING.md](TRANSLATING.md) - a two-minute in-game export for outdoor zones/cities/battlegrounds, plus automatic background collection of dungeon/instance names as you play. No research needed either way.

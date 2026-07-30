@@ -39,7 +39,7 @@ Two transports: a manual one over GreenWall's own confederation channel for firs
 
 ## Contributing a translation
 
-Play on a language other than English/German and want zone names translated correctly? See [TRANSLATING.md](https://github.com/Gabbajoe/GreenWallGuildRoster/blob/main/TRANSLATING.md) - a two-minute in-game export, no research needed.
+Play on a language other than English/German and want zone names translated correctly? See [TRANSLATING.md](https://github.com/Gabbajoe/GreenWallGuildRoster/blob/main/TRANSLATING.md) - a two-minute in-game export for outdoor zones, plus automatic background collection of dungeon names as you play. No research needed either way.
 
 ## Source
 

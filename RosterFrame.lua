@@ -32,7 +32,7 @@ frame.TitleText:SetText(ns.L['GreenWall GuildRoster'])
 -- pattern already proven to render reliably in this client. Class icons
 -- are embedded as inline |T texture markup inside the text itself, for
 -- the same reason - no separate per-row Texture regions needed.
-local headers = { 'Lvl', ns.L['Class'], 'Name', 'Zone', ns.L['Guild'], 'Status', 'Alt' }
+local headers = { 'Lvl', ns.L['Class'], ns.L['Name'], ns.L['Zone'], ns.L['Guild'], ns.L['Status'], ns.L['Alt'] }
 local colX =    { 0,     36,       80,     220,    390,     470,      540 }
 local CONTENT_WIDTH = 680
 

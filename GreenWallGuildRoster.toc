@@ -8,6 +8,7 @@
 ## IconTexture: Interface\AddOns\GreenWallGuildRoster\icon.png
 
 Locale.lua
+ZoneData.lua
 Core.lua
 RosterFrame.lua
 Minimap.lua

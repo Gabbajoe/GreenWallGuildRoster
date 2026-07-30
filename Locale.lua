@@ -13,6 +13,11 @@ if GetLocale() == 'deDE' then
     L['GreenWall GuildRoster'] = 'GreenWall Gildenroster'
     L['Class'] = 'Klasse'
     L['Guild'] = 'Gilde'
+    L['Alt'] = 'Twink'
+    -- 'Name', 'Zone', 'Status' deliberately left untranslated (English) per
+    -- explicit user preference - routed through L like every other header
+    -- so a future locale isn't blocked from translating them, they just
+    -- fall through to English here same as any other missing key.
     L['Show Offline'] = 'Offline anzeigen'
     L['No data yet - waiting for guild roster / broadcast from the other co-guild.'] = 'Noch keine Daten - warte auf Gildenroster / Broadcast der anderen Co-Gilde.'
     L['Never broadcast'] = 'Noch nie gesendet'

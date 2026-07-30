@@ -33,7 +33,11 @@ The game only ever hands an addon a zone's name as plain, already-translated tex
    ```
 6. Copy that whole `["zoneExport"] = { ... }` block and send it over (Discord, pastebin, whatever's easiest).
 
-That's it - no need to visit every zone in the game, the export covers everything the client knows about in one go.
+That's it for outdoor zones/cities/battlegrounds - no need to visit every one, the export covers everything the client knows about in one go.
+
+## Dungeons and other instances
+
+Instances (The Deadmines, Scholomance, ...) aren't covered by the export above - Classic Era's client doesn't register them the same way outdoor zones are. Instead, the addon quietly records the dungeon's name (and its own stable numeric ID, same idea as the zone export) into that same `zoneExport` table every time you zone into one. No command needed - if you've run a few dungeons since installing the addon, some may already be in there when you export. Otherwise, just running a dungeon or two before doing the steps above picks up a few more each time.
 
 ## Source
 
