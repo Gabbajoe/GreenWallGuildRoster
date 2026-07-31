@@ -53,6 +53,14 @@ offlineCheck:SetScript('OnClick', function(self)
     if ns.RefreshFrame then ns.RefreshFrame() end
 end)
 
+-- Per-guild online counts, same row as the checkbox. Filled in by
+-- BuildEntries (it already walks every entry with guild/online/stale on
+-- it before the showOffline filter discards anything), read back out by
+-- Refresh.
+local onlineCountFS = frame:CreateFontString(nil, 'OVERLAY', 'GameFontNormalSmall')
+onlineCountFS:SetPoint('TOPRIGHT', -16, -33)
+onlineCountFS:SetJustifyH('RIGHT')
+
 -- Column index -> sortable field. 'online' is stored as 0/1 so it sorts
 -- like a number; everything else falls back to '' or 0 when missing so
 -- mixed nil/non-nil values never break the comparator.
@@ -377,6 +385,9 @@ local function GetBadgeIcon(i)
     return tex
 end
 
+local guildOnlineCounts = {}
+local guildOrder = {}
+
 local function BuildEntries()
     local list = {}
 
@@ -415,6 +426,20 @@ local function BuildEntries()
       end
     end
 
+    -- Counted here, before the showOffline filter below would otherwise
+    -- discard offline entries outright - this needs every entry regardless
+    -- of that toggle, it's always "how many are online right now".
+    guildOnlineCounts = {}
+    guildOrder = {}
+    for _, entry in ipairs(list) do
+        if entry.online and not entry.stale then
+            if not guildOnlineCounts[entry.guild] then
+                guildOrder[#guildOrder + 1] = entry.guild
+            end
+            guildOnlineCounts[entry.guild] = (guildOnlineCounts[entry.guild] or 0) + 1
+        end
+    end
+
     if not GreenWallGuildRosterDB.showOffline then
         local filtered = {}
         for _, entry in ipairs(list) do
@@ -444,6 +469,15 @@ local function Refresh()
     UpdateLastBroadcastLabel()
     local list = BuildEntries()
     local col = { {}, {}, {}, {}, {}, {}, {} }
+
+    -- Own guild first, then peers in whatever order they were first seen -
+    -- own-guild gold/peer light-blue matches the Guild column's coloring.
+    local countParts = {}
+    for _, gname in ipairs(guildOrder) do
+        local guildHex = (ns.ownGuild and gname == ns.ownGuild) and 'ffd200' or '5ec4ff'
+        countParts[#countParts + 1] = ('|cff%s%s|r: %d'):format(guildHex, gname, guildOnlineCounts[gname])
+    end
+    onlineCountFS:SetText(table.concat(countParts, '   '))
 
     -- Pass 1: just the text. Buttons/icons are positioned in pass 2, after
     -- the real row pitch is measured from the rendered text - guessing it

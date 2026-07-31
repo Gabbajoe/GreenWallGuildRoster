@@ -128,7 +128,7 @@ local lastKnownMembers = {}
 -- Requiring the same name to be missing on two scans in a row (they run
 -- every FULL_SYNC_INTERVAL/AutoBroadcast cycle) means a one-off blip
 -- self-corrects on the very next scan instead of propagating.
-local MISSING_STREAK_THRESHOLD = 2
+local MISSING_STREAK_THRESHOLD = 3
 local missingStreak = {}
 -- Sentinel in the existing online field (normally '0'/'1') - '2' means
 -- "no longer a member, delete this entry" rather than "offline".
@@ -276,23 +276,72 @@ local function RequestRefresh()
     end)
 end
 
+-- Sends a full roster snapshot to one specific whisper target - the same
+-- payload/chunking AutoBroadcast uses, just aimed at a single name instead
+-- of a picked set. Shared by the ping-reply and the first-contact reply
+-- in MergePeerPayload below.
+local function SendFullRosterTo(target)
+    if not ns.ownTag then return end
+    local rows = CollectOwnRoster(true)
+    if #rows == 0 then return end
+    local chunks = ChunkRows(rows, 200)
+    for i, payload in ipairs(chunks) do
+        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, ns.ownTag .. '#' .. payload, 'WHISPER', target)
+        if ns.debugAddonMsg then
+            print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg (reply) to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
+        end
+    end
+end
+
 -- Shared by both transports: merges a received chunk into the peer cache.
 -- Only accepted from a tag that's actually one of GreenWall's declared
 -- GWp co-guilds - otherwise a stranger who happens to land on the same
 -- channel name (channel names are realm-wide, first-come-first-served)
 -- could get merged into the roster as if they were part of the
 -- confederation.
-local function MergePeerPayload(tag, payload)
+--
+-- sender (optional, whisper only): when this is the FIRST data we've ever
+-- gotten from this co-guild, reply with our own roster right back at
+-- whoever just sent it, instead of waiting for our own next scheduled
+-- broadcast cycle (up to 2 minutes away) to notice they're now a known
+-- target. Otherwise a ping-triggered first contact stayed one-directional
+-- until that delay passed - we'd have their data, but they wouldn't have
+-- ours yet.
+local function MergePeerPayload(tag, payload, sender)
     if not tag or not payload or tag == ns.ownTag then return end
     if not ns.peerNames[tag] then return end
 
+    local isFirstContact = sender and not next(GreenWallGuildRosterDB.peers[tag] or {})
+
     GreenWallGuildRosterDB.peers[tag] = GreenWallGuildRosterDB.peers[tag] or {}
     local store = GreenWallGuildRosterDB.peers[tag]
+
+    -- Defense in depth against a sender whose own leave-detection glitched
+    -- (older build, or the sanity guard in CollectOwnRoster missed some
+    -- other edge case) - a single payload chunk claiming a large chunk of
+    -- an already-known guild has left all at once is far more likely to be
+    -- a bad read than a real mass departure. Skip leave markers for this
+    -- chunk in that case (other rows in it still apply normally); a
+    -- genuine departure gets picked up again on the next real sync.
+    local knownCount = 0
+    for _ in pairs(store) do knownCount = knownCount + 1 end
+    local leaveCount = 0
+    for row in payload:gmatch('[^~]+') do
+        local online = select(6, strsplit(';', row))
+        if online == LEAVE_MARKER then leaveCount = leaveCount + 1 end
+    end
+    local suspiciousLeaveBurst = leaveCount >= 3 and knownCount > 0 and leaveCount > knownCount * 0.5
+    if suspiciousLeaveBurst and ns.debugAddonMsg then
+        print(('|cff33ff99GreenWallGuildRoster|r: MergePeerPayload: ignoring %d leave-marker(s) from tag %s (looks like a bad read, known=%d).'):format(leaveCount, tag, knownCount))
+    end
+
     for row in payload:gmatch('[^~]+') do
         local name, class, level, zone, note, online, linkedMain, badge = strsplit(';', row)
         if name and name ~= '' then
             if online == LEAVE_MARKER then
-                store[name] = nil
+                if not suspiciousLeaveBurst then
+                    store[name] = nil
+                end
             else
                 store[name] = {
                     class = class, level = tonumber(level) or 0, zone = zone,
@@ -305,6 +354,13 @@ local function MergePeerPayload(tag, payload)
     end
 
     RequestRefresh()
+
+    if isFirstContact then
+        if ns.debugAddonMsg then
+            print(('|cff33ff99GreenWallGuildRoster|r: MergePeerPayload: first contact with tag %s, replying to %s immediately.'):format(tag, sender))
+        end
+        SendFullRosterTo(sender)
+    end
 end
 
 -- Manual transport: GreenWallAPI.SendMessage, riding GreenWall's own
@@ -348,7 +404,7 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
     -- from GetGuildRosterInfo.
     if guild then return end
     local tag, payload = message:match('^(%a+)#(.*)$')
-    MergePeerPayload(tag, payload)
+    MergePeerPayload(tag, payload, sender)
 end
 
 -- Automatic transport: addon messages. Turns out Classic disables
@@ -437,43 +493,47 @@ local function AutoBroadcast(forceFull)
     lastAutoBroadcast = GetTime()
 end
 
--- Sends a full roster snapshot to one specific whisper target - the same
--- payload/chunking AutoBroadcast uses, just aimed at a single name instead
--- of a picked set. Shared by the ping-reply below.
-local function SendFullRosterTo(target)
-    if not ns.ownTag then return end
-    local rows = CollectOwnRoster(true)
-    if #rows == 0 then return end
-    local chunks = ChunkRows(rows, 200)
-    for i, payload in ipairs(chunks) do
-        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, ns.ownTag .. '#' .. payload, 'WHISPER', target)
-        if ns.debugAddonMsg then
-            print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg (ping reply) to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
-        end
-    end
-end
-
 -- WHO-based discovery: finds peer guild members without needing anyone to
 -- click Broadcast first. Query syntax (g-"GuildName") and the
 -- SetWhoToUi/event-suppression technique are verified against
 -- DeathNotificationLib and Deathlog's own /who usage (both installed,
 -- both confirmed working in this exact client), not guessed.
 --
--- Sending our full roster straight to everyone /who turns up would risk
--- the same kind of burst that caused a real disconnect earlier (see
--- Broadcast's history) - a guild-filtered /who can return up to ~50
--- names, most of whom won't have this addon at all. So new contacts only
--- get a single tiny ping (this message, no payload) first; only someone
--- who actually has the addon receiving that ping bothers replying (see
--- the ping branch in OnAddonMessage below, which calls SendFullRosterTo),
--- and only that reply is the expensive multi-chunk exchange. New pings
--- are also capped per cycle for the same flood-safety reason.
-local WHO_PING_PREFIX = 'GWGR_PING#'
+-- Sends our full roster directly to newly /who-discovered names, capped
+-- per cycle (MAX_NEW_CONTACTS_PER_WHO_CYCLE) rather than everyone /who
+-- turns up (up to ~50) - that cap is what actually keeps this
+-- flood-safe, the same way it already bounds AutoBroadcast's targets.
+-- A lightweight ping-first handshake (send a tiny message, only reply in
+-- full once the other side proves they have the addon) would be cheaper
+-- against strangers /who turns up who don't have the addon at all, but
+-- only works once BOTH sides recognize the ping format - anyone still on
+-- an older release just never replies to one, effectively invisible to
+-- discovery until they update. So our own outbound discovery here sends
+-- the real payload directly instead, which works the same against any
+-- version that already understands the plain tag#payload format (every
+-- release of this addon, old or new, always has). The receive side below
+-- still recognizes an incoming ping and replies in kind, though - once
+-- enough co-guild members are on a version that pings first, this side
+-- is what makes that actually work for them.
 local MAX_NEW_CONTACTS_PER_WHO_CYCLE = 5
+local WHO_PING_PREFIX = 'GWGR_PING#'
 local pendingWhoTag, pendingWhoGuildName = nil, nil
 local whoQueryOrder, whoQueryIndex = {}, 0
 
-local function StartWhoQuery()
+-- C_FriendList.SendWho is ALSO a protected function requiring a direct
+-- hardware event (mouse click / key press) - same restriction as
+-- SendChatMessage elsewhere in this file, confirmed the hard way
+-- (ADDON_ACTION_BLOCKED calling it straight from a C_Timer ticker). The
+-- comments in DeathNotificationLib's own /who code actually already said
+-- as much ("ensuring compliance with WoW's hardware-event requirement")
+-- - missed applying that the first time round. Fix, same technique they
+-- use: the ticker below only marks a query as due; the actual SendWho
+-- call happens from a shared WorldFrame OnMouseDown / OnKeyDown hook,
+-- which is about as close to "automatic" as this restriction allows,
+-- since normal play means a hardware event within moments regardless.
+local whoQueryDue = false
+
+local function DoWhoQuery()
     if pendingWhoTag then return end -- previous query never got a WHO_LIST_UPDATE; don't pile up
     whoQueryOrder = {}
     for tag in pairs(ns.peerNames or {}) do
@@ -498,6 +558,28 @@ local function StartWhoQuery()
     C_FriendList.SendWho(('g-"%s"'):format(guildName))
 end
 
+local function RequestWhoQuery()
+    whoQueryDue = true
+end
+
+-- Single shared hardware-event hook (same pattern as DeathNotificationLib's
+-- registerInputDrain), draining whatever's due whenever the player next
+-- clicks or presses a key.
+WorldFrame:HookScript('OnMouseDown', function()
+    if whoQueryDue then
+        whoQueryDue = false
+        DoWhoQuery()
+    end
+end)
+local whoInputFrame = CreateFrame('Frame', nil, UIParent)
+whoInputFrame:SetPropagateKeyboardInput(true)
+whoInputFrame:SetScript('OnKeyDown', function()
+    if whoQueryDue then
+        whoQueryDue = false
+        DoWhoQuery()
+    end
+end)
+
 local function OnWhoListUpdate()
     if FriendsFrame then
         FriendsFrame:RegisterEvent('WHO_LIST_UPDATE')
@@ -521,11 +603,10 @@ local function OnWhoListUpdate()
     end
 
     for i = 1, math.min(MAX_NEW_CONTACTS_PER_WHO_CYCLE, #newContacts) do
-        local target = newContacts[i]
-        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, WHO_PING_PREFIX .. ns.ownTag, 'WHISPER', target)
         if ns.debugAddonMsg then
-            print(('|cff33ff99GreenWallGuildRoster|r: TX ping to %s (new contact via /who) ok=%s'):format(target, tostring(ok)))
+            print(('|cff33ff99GreenWallGuildRoster|r: new contact via /who: %s - sending full roster.'):format(newContacts[i]))
         end
+        SendFullRosterTo(newContacts[i])
     end
 end
 
@@ -541,6 +622,11 @@ local function OnAddonMessage(prefix, message, channel, sender)
     end
     if channel ~= 'WHISPER' then return end
 
+    -- Future-facing: a peer on a version whose own /who discovery pings
+    -- first rather than sending directly (see the comment above
+    -- OnWhoListUpdate) needs this side to recognize and answer that ping -
+    -- otherwise we'd just be invisible to their discovery the same way an
+    -- old version is invisible to ours right now.
     local pingTag = message:match('^' .. WHO_PING_PREFIX .. '(%a+)$')
     if pingTag then
         if ns.peerNames[pingTag] then
@@ -550,7 +636,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
     end
 
     local tag, payload = message:match('^(%a+)#(.*)$')
-    MergePeerPayload(tag, payload)
+    MergePeerPayload(tag, payload, sender)
 end
 
 local apiHandlerRegistered = false
@@ -634,7 +720,7 @@ end)
 C_Timer.NewTicker(120, AutoBroadcast)
 -- Separate, slower cadence for /who-based discovery - rotates one co-guild
 -- per tick rather than querying all of them at once.
-C_Timer.NewTicker(30, StartWhoQuery)
+C_Timer.NewTicker(30, RequestWhoQuery)
 
 ns.Broadcast = Broadcast
 
