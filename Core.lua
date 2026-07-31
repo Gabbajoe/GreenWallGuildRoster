@@ -437,6 +437,98 @@ local function AutoBroadcast(forceFull)
     lastAutoBroadcast = GetTime()
 end
 
+-- Sends a full roster snapshot to one specific whisper target - the same
+-- payload/chunking AutoBroadcast uses, just aimed at a single name instead
+-- of a picked set. Shared by the ping-reply below.
+local function SendFullRosterTo(target)
+    if not ns.ownTag then return end
+    local rows = CollectOwnRoster(true)
+    if #rows == 0 then return end
+    local chunks = ChunkRows(rows, 200)
+    for i, payload in ipairs(chunks) do
+        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, ns.ownTag .. '#' .. payload, 'WHISPER', target)
+        if ns.debugAddonMsg then
+            print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg (ping reply) to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
+        end
+    end
+end
+
+-- WHO-based discovery: finds peer guild members without needing anyone to
+-- click Broadcast first. Query syntax (g-"GuildName") and the
+-- SetWhoToUi/event-suppression technique are verified against
+-- DeathNotificationLib and Deathlog's own /who usage (both installed,
+-- both confirmed working in this exact client), not guessed.
+--
+-- Sending our full roster straight to everyone /who turns up would risk
+-- the same kind of burst that caused a real disconnect earlier (see
+-- Broadcast's history) - a guild-filtered /who can return up to ~50
+-- names, most of whom won't have this addon at all. So new contacts only
+-- get a single tiny ping (this message, no payload) first; only someone
+-- who actually has the addon receiving that ping bothers replying (see
+-- the ping branch in OnAddonMessage below, which calls SendFullRosterTo),
+-- and only that reply is the expensive multi-chunk exchange. New pings
+-- are also capped per cycle for the same flood-safety reason.
+local WHO_PING_PREFIX = 'GWGR_PING#'
+local MAX_NEW_CONTACTS_PER_WHO_CYCLE = 5
+local pendingWhoTag, pendingWhoGuildName = nil, nil
+local whoQueryOrder, whoQueryIndex = {}, 0
+
+local function StartWhoQuery()
+    if pendingWhoTag then return end -- previous query never got a WHO_LIST_UPDATE; don't pile up
+    whoQueryOrder = {}
+    for tag in pairs(ns.peerNames or {}) do
+        if tag ~= ns.ownTag then
+            whoQueryOrder[#whoQueryOrder + 1] = tag
+        end
+    end
+    if #whoQueryOrder == 0 then return end
+
+    whoQueryIndex = (whoQueryIndex % #whoQueryOrder) + 1
+    local tag = whoQueryOrder[whoQueryIndex]
+    local guildName = ns.peerNames[tag]
+    if not guildName then return end
+
+    pendingWhoTag, pendingWhoGuildName = tag, guildName
+    -- Keeps the default Who panel from popping open/updating in response
+    -- to our background scan - same suppression DeathNotificationLib uses.
+    if FriendsFrame then
+        FriendsFrame:UnregisterEvent('WHO_LIST_UPDATE')
+    end
+    C_FriendList.SetWhoToUi(true)
+    C_FriendList.SendWho(('g-"%s"'):format(guildName))
+end
+
+local function OnWhoListUpdate()
+    if FriendsFrame then
+        FriendsFrame:RegisterEvent('WHO_LIST_UPDATE')
+    end
+    if not pendingWhoTag then return end
+    local tag, guildName = pendingWhoTag, pendingWhoGuildName
+    pendingWhoTag, pendingWhoGuildName = nil, nil
+
+    local ownName = UnitName('player')
+    local store = GreenWallGuildRosterDB.peers[tag]
+    local newContacts = {}
+    local num = C_FriendList.GetNumWhoResults() or 0
+    for i = 1, num do
+        local info = C_FriendList.GetWhoInfo(i)
+        if info and info.guild == guildName and info.fullName then
+            local shortName = info.fullName:match('^[^-]+') or info.fullName
+            if shortName ~= ownName and not (store and store[shortName]) then
+                newContacts[#newContacts + 1] = shortName
+            end
+        end
+    end
+
+    for i = 1, math.min(MAX_NEW_CONTACTS_PER_WHO_CYCLE, #newContacts) do
+        local target = newContacts[i]
+        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, WHO_PING_PREFIX .. ns.ownTag, 'WHISPER', target)
+        if ns.debugAddonMsg then
+            print(('|cff33ff99GreenWallGuildRoster|r: TX ping to %s (new contact via /who) ok=%s'):format(target, tostring(ok)))
+        end
+    end
+end
+
 local function OnAddonMessage(prefix, message, channel, sender)
     -- Only our own prefix, not every addon message on the client (that
     -- was drowning the debug log in unrelated traffic from GuildMap,
@@ -448,6 +540,15 @@ local function OnAddonMessage(prefix, message, channel, sender)
             tostring(channel), tostring(sender)))
     end
     if channel ~= 'WHISPER' then return end
+
+    local pingTag = message:match('^' .. WHO_PING_PREFIX .. '(%a+)$')
+    if pingTag then
+        if ns.peerNames[pingTag] then
+            SendFullRosterTo(sender)
+        end
+        return
+    end
+
     local tag, payload = message:match('^(%a+)#(.*)$')
     MergePeerPayload(tag, payload)
 end
@@ -485,6 +586,7 @@ frame:RegisterEvent('ADDON_LOADED')
 frame:RegisterEvent('PLAYER_ENTERING_WORLD')
 frame:RegisterEvent('GUILD_ROSTER_UPDATE')
 frame:RegisterEvent('CHAT_MSG_ADDON')
+frame:RegisterEvent('WHO_LIST_UPDATE')
 
 frame:SetScript('OnEvent', function(_, event, ...)
     if event == 'ADDON_LOADED' then
@@ -520,6 +622,8 @@ frame:SetScript('OnEvent', function(_, event, ...)
         RequestRefresh()
     elseif event == 'CHAT_MSG_ADDON' then
         OnAddonMessage(...)
+    elseif event == 'WHO_LIST_UPDATE' then
+        OnWhoListUpdate()
     end
 end)
 
@@ -528,6 +632,9 @@ end)
 -- roster; the message-budget target selection above keeps the per-cycle
 -- burst bounded regardless of how often this fires.
 C_Timer.NewTicker(120, AutoBroadcast)
+-- Separate, slower cadence for /who-based discovery - rotates one co-guild
+-- per tick rather than querying all of them at once.
+C_Timer.NewTicker(30, StartWhoQuery)
 
 ns.Broadcast = Broadcast
 
