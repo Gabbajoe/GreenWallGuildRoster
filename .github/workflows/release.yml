@@ -1,0 +1,21 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Lets the packager create/update the matching GitHub Release (zip
+    # asset + notes) using the workflow's own token - without this the
+    # default GITHUB_TOKEN is read-only and that step fails.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
