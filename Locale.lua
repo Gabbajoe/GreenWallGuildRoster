@@ -37,6 +37,11 @@ if GetLocale() == 'deDE' then
 
     -- Options panel
     L['Show minimap button'] = 'Minimap-Button anzeigen'
+    L['Show data-source column (requires /reload)'] = 'Datenquellen-Spalte anzeigen (erfordert /reload)'
+    L['Show co-guild member levels in Prat-3.0 chat (if installed)'] = 'Level von Co-Gilden-Mitgliedern im Prat-3.0-Chat anzeigen (falls installiert)'
+    L['Example:'] = 'Beispiel:'
+    L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r'] = 'Damit der Tag nicht doppelt erscheint, zusätzlich GreenWalls eigenen Co-Gilden-Tag abschalten: |cffffd200/gw tag off|r'
+    L['^ broadcast   ~ whisper   * /who only (no addon)'] = '^ Broadcast   ~ Flüster   * nur per /who (kein Addon)'
 
     -- Slash command output
     L['GreenWallGuildRoster commands:'] = 'GreenWallGuildRoster Befehle:'
@@ -47,7 +52,10 @@ if GetLocale() == 'deDE' then
     L['/gwgr status - show GreenWallAPI availability, own tag, and known confederation tags'] = '/gwgr status - zeigt GreenWallAPI-Verfügbarkeit, eigenes Tag und bekannte Konföderations-Tags'
     L['/gwgr debug - toggle addon-message RX/TX logging'] = '/gwgr debug - Addon-Message RX/TX-Logging umschalten'
     L['/gwgr minimap - toggle the minimap button (also in Options > AddOns > GreenWall GuildRoster)'] = '/gwgr minimap - Minimap-Button umschalten (auch unter Optionen > AddOns > GreenWall GuildRoster)'
+    L['/gwgr exportzones - export all known zone names for your client language, for building translation tables'] = '/gwgr exportzones - exportiert alle bekannten Zonennamen für deine Client-Sprache, zum Aufbau von Übersetzungstabellen'
     L['/gwgr help - this list'] = '/gwgr help - diese Liste'
+    L['Exported %d zone names for locale "%s" into SavedVariables.'] = '%d Zonennamen für Sprache "%s" in die SavedVariables exportiert.'
+    L['/reload or log out to flush to disk, then find GreenWallGuildRosterDB.zoneExport in your SavedVariables/GreenWallGuildRoster.lua and send it over.'] = '/reload oder ausloggen zum Speichern, dann GreenWallGuildRosterDB.zoneExport in deiner SavedVariables/GreenWallGuildRoster.lua suchen und rüberschicken.'
 
     L['Force full AutoBroadcast (addon message, all online members)...'] = 'Löse vollen AutoBroadcast aus (Addon-Message, alle Online-Mitglieder)...'
     L['Broadcast sent.'] = 'Broadcast gesendet.'

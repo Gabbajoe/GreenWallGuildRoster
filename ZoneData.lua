@@ -16,8 +16,8 @@ local ADDON_NAME, ns = ...
 -- client just shows the English city names). See TRANSLATING.md - this
 -- file is a plain drop-in target for a new language's exported table.
 -- Dungeon/instance names aren't covered by the map-ID export and just
--- pass through untranslated, except The Deadmines - confirmed correct by
--- a live in-game screenshot, not the export.
+-- pass through untranslated, except where confirmed correct by a live
+-- in-game screenshot (The Deadmines, Wailing Caverns), not the export.
 local ZONE_EN_DE = {
     ['Durotar'] = 'Durotar', ['Mulgore'] = 'Mulgore', ['The Barrens'] = 'Das Brachland',
     ['Alterac Mountains'] = 'Alteracgebirge', ['Arathi Highlands'] = 'Arathihochland', ['Badlands'] = 'Ödland',
@@ -40,7 +40,7 @@ local ZONE_EN_DE = {
     ['Thunder Bluff'] = 'Thunder Bluff', ['Darnassus'] = 'Darnassus', ['Undercity'] = 'Undercity',
     -- Battlegrounds
     ['Alterac Valley'] = 'Alteractal', ['Warsong Gulch'] = 'Warsongschlucht', ['Arathi Basin'] = 'Arathibecken',
-    ['The Deadmines'] = 'Die Todesminen',
+    ['The Deadmines'] = 'Die Todesminen', ['Wailing Caverns'] = 'Die Höhlen des Wehklagens',
 }
 local ZONE_DE_EN = {}
 for en, de in pairs(ZONE_EN_DE) do ZONE_DE_EN[de] = en end

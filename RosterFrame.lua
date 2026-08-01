@@ -4,7 +4,7 @@ local CLASS_COLORS = RAID_CLASS_COLORS
 local CLASS_ICON_TEXTURE = 'Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes'
 
 local frame = CreateFrame('Frame', 'GreenWallGuildRosterFrame', UIParent, 'BasicFrameTemplateWithInset')
-frame:SetSize(730, 520)
+frame:SetSize(710, 520)
 frame:SetPoint('CENTER')
 frame:SetMovable(true)
 frame:EnableMouse(true)
@@ -25,6 +25,18 @@ frame:SetFrameStrata('MEDIUM')
 frame:SetToplevel(true)
 frame:Hide()
 frame.TitleText:SetText(ns.L['GreenWall GuildRoster'])
+-- Opts this window into the default UI's Escape-key handling, same as
+-- every other Blizzard/addon window - without this, Escape closes
+-- nothing here and the player has to click the X manually.
+tinsert(UISpecialFrames, 'GreenWallGuildRosterFrame')
+
+GreenWallGuildRosterDB = GreenWallGuildRosterDB or {}
+if GreenWallGuildRosterDB.showOffline == nil then
+    GreenWallGuildRosterDB.showOffline = false
+end
+if GreenWallGuildRosterDB.showSourceColumn == nil then
+    GreenWallGuildRosterDB.showSourceColumn = false
+end
 
 -- Column layout shared by the header and the body. Each column is one
 -- FontString spanning every row (see below) rather than a grid of
@@ -32,14 +44,23 @@ frame.TitleText:SetText(ns.L['GreenWall GuildRoster'])
 -- pattern already proven to render reliably in this client. Class icons
 -- are embedded as inline |T texture markup inside the text itself, for
 -- the same reason - no separate per-row Texture regions needed.
-local headers = { 'Lvl', ns.L['Class'], ns.L['Name'], ns.L['Zone'], ns.L['Guild'], ns.L['Status'], ns.L['Alt'] }
-local colX =    { 0,     36,       80,     220,    390,     470,      540 }
-local CONTENT_WIDTH = 680
-
-GreenWallGuildRosterDB = GreenWallGuildRosterDB or {}
-if GreenWallGuildRosterDB.showOffline == nil then
-    GreenWallGuildRosterDB.showOffline = false
-end
+--
+-- The trailing "#" (source-marker) column's structure is built
+-- unconditionally, regardless of the saved showSourceColumn toggle -
+-- deliberately NOT branched on that setting here, because this code runs
+-- at file load time, before the real per-character SavedVariables value
+-- has actually been injected (that only happens right before ADDON_LOADED
+-- fires - see the identical note in Core.lua's ADDON_LOADED handler,
+-- learned the hard way once already with mainLinks). Branching on the
+-- setting here always saw a stale/default value and silently built the
+-- wrong layout every time. Instead, the column always exists structurally
+-- (Alt is always the narrower 100px to make room for it), and
+-- UpdateHeaderText/Refresh below - which only ever run in response to a
+-- real event, always safely after data has loaded - decide whether to
+-- actually show its header/content or leave it blank.
+local CONTENT_WIDTH = 660
+local headers = { 'Lvl', ns.L['Class'], ns.L['Name'], ns.L['Zone'], ns.L['Guild'], ns.L['Status'], ns.L['Alt'], '#' }
+local colX =    { 0,     36,            80,           220,         390,           470,            520,        620 }
 
 local offlineCheck = CreateFrame('CheckButton', nil, frame, 'UICheckButtonTemplate')
 offlineCheck:SetSize(22, 22)
@@ -72,6 +93,7 @@ local sortFields = {
     { key = 'guild', numeric = false, defaultAsc = true },
     { key = 'online', numeric = true, defaultAsc = false },
     { key = 'linkedMain', numeric = false, defaultAsc = true },
+    { key = 'marker', numeric = false, defaultAsc = true },
 }
 local sortColumn = 1
 local sortAsc = false
@@ -119,7 +141,15 @@ end
 
 local function UpdateHeaderText()
     for i, h in ipairs(headers) do
-        headerFS[i]:SetText(h .. (i == sortColumn and (sortAsc and ' ^' or ' v') or ''))
+        -- Column 8 ("#") only actually shows a header once the real
+        -- SavedVariables value is known safe to read (see the comment
+        -- where headers/colX are built) - blank otherwise, same as its
+        -- body text in Refresh below.
+        if i == 8 and not GreenWallGuildRosterDB.showSourceColumn then
+            headerFS[i]:SetText('')
+        else
+            headerFS[i]:SetText(h .. (i == sortColumn and (sortAsc and ' ^' or ' v') or ''))
+        end
     end
 end
 
@@ -221,6 +251,38 @@ local function CopyPlayerName(name)
     StaticPopup_Show('GREENWALLGUILDROSTER_COPY_NAME', nil, nil, name)
 end
 
+-- Diagnostic for the rank-badge heuristic (RankBadge in Core.lua), which
+-- has already been wrong once (rankIndex 0/1 only, but Saftladen's native
+-- frame shows the hollow "officer" crown on rankIndex 2 as well) - rather
+-- than guess a new rule blind a third time, this prints the raw inputs
+-- for one member at a time so they can be compared against a native-frame
+-- screenshot. Only meaningful for own-guild rows: GetGuildRosterInfo/
+-- GuildControlGetRankFlags ground truth is only available locally for
+-- your own guild, not for a peer whose badge just arrived over the wire.
+local function ShowRankInfo(name)
+    local total = GetNumGuildMembers() or 0
+    for i = 1, total do
+        local rosterName, _, rankIndex = GetGuildRosterInfo(i)
+        if rosterName then
+            local shortName = rosterName:match('^[^-]+') or rosterName
+            if shortName == name then
+                local badge = ns.RankBadge and ns.RankBadge(rankIndex)
+                local ok, flags = pcall(C_GuildInfo.GuildControlGetRankFlags, rankIndex)
+                local flagStr = 'n/a'
+                if ok and flags then
+                    local parts = {}
+                    for idx, v in ipairs(flags) do parts[idx] = idx .. '=' .. tostring(v) end
+                    flagStr = table.concat(parts, ', ')
+                end
+                print(('|cff33ff99GreenWallGuildRoster|r: %s: rankIndex=%s badge=%s flags=[%s]'):format(
+                    name, tostring(rankIndex), tostring(badge), flagStr))
+                return
+            end
+        end
+    end
+    print(('|cff33ff99GreenWallGuildRoster|r: %s is not in your own guild - only the synced badge value is known here (rankIndex/flags aren\'t available for peers).'):format(name))
+end
+
 -- EasyMenu isn't available in this client build (ADDON_ACTION_BLOCKED-style
 -- surprise, but a plain nil-function error this time), so this goes
 -- straight to the lower-level dropdown API EasyMenu itself wraps -
@@ -253,6 +315,12 @@ UIDropDownMenu_Initialize(rowMenuFrame, function(self, level)
     info.text = ns.L['Copy Name']
     info.notCheckable = true
     info.func = function() CopyPlayerName(name) end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
+    info.text = 'Show Rank Info'
+    info.notCheckable = true
+    info.func = function() ShowRankInfo(name) end
     UIDropDownMenu_AddButton(info, level)
 end, 'MENU')
 
@@ -317,10 +385,22 @@ end)
 local lastBroadcastFS = frame:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightSmall')
 lastBroadcastFS:SetPoint('LEFT', broadcastBtn, 'RIGHT', 10, 0)
 
+-- Only meaningful (and only shown) when the source-marker column itself is
+-- on - explaining symbols nobody can currently see would just be clutter.
+-- Always created (same reasoning as the "#" column itself - reading the
+-- saved toggle this early would only ever see a not-yet-loaded value);
+-- shown/hidden later from UpdateLastBroadcastLabel, which only ever runs
+-- from Refresh, always safely after data has loaded.
+local legendFS = frame:CreateFontString(nil, 'OVERLAY', 'GameFontDisableSmall')
+legendFS:SetPoint('BOTTOMRIGHT', frame, 'BOTTOMRIGHT', -16, 17)
+legendFS:SetText(ns.L['^ broadcast   ~ whisper   * /who only (no addon)'])
+
 -- No auto-broadcast (see Core.lua), so this is a passive nudge: color goes
 -- from green to red the staler your last broadcast gets, as a reminder to
 -- click the button yourself rather than anything sending on its own.
 local function UpdateLastBroadcastLabel()
+    if GreenWallGuildRosterDB.showSourceColumn then legendFS:Show() else legendFS:Hide() end
+
     local last = GreenWallGuildRosterDB and GreenWallGuildRosterDB.lastBroadcast
     if not last then
         lastBroadcastFS:SetText('|cffff3333' .. ns.L['Never broadcast'] .. '|r')
@@ -388,6 +468,24 @@ end
 local guildOnlineCounts = {}
 local guildOrder = {}
 
+-- Own guild is always gold; each *other* co-guild gets its own color instead
+-- of sharing one flat blue, so a 3-plus-guild confederation stays visually
+-- distinguishable. Assigned lazily, in first-seen order, and cached here
+-- (not reset on Refresh) so a guild doesn't change color from one refresh
+-- to the next just because the sort order shuffled who's listed first.
+local PEER_GUILD_COLORS = { '5ec4ff', 'ff6ec4', 'c983ff', 'ffa754', '7fffa0', '8c8cff' }
+local peerGuildColorCache = {}
+local nextPeerColorIndex = 1
+local function GuildHexFor(guildName)
+    if ns.ownGuild and guildName == ns.ownGuild then return 'ffd200' end
+    if not guildName then return PEER_GUILD_COLORS[1] end
+    if not peerGuildColorCache[guildName] then
+        peerGuildColorCache[guildName] = PEER_GUILD_COLORS[((nextPeerColorIndex - 1) % #PEER_GUILD_COLORS) + 1]
+        nextPeerColorIndex = nextPeerColorIndex + 1
+    end
+    return peerGuildColorCache[guildName]
+end
+
 local function BuildEntries()
     local list = {}
 
@@ -418,12 +516,49 @@ local function BuildEntries()
             list[#list + 1] = {
                 guild = gname, name = name, level = info.level, classFile = info.class,
                 zone = zone, note = info.note, online = info.online,
-                stale = (time() - (info.ts or 0)) > 180,
+                -- Must stay safely longer than Core.lua's FULL_SYNC_INTERVAL
+                -- (600s): someone who's continuously online never appears in
+                -- a delta (only online/offline *transitions* get reported),
+                -- so their ts only advances on a full sync - a threshold
+                -- shorter than that interval would flip a perfectly-online
+                -- member to "stale" every cycle just before their next
+                -- refresh, the same class of bug as when this and
+                -- FULL_SYNC_INTERVAL briefly drifted out of proportion
+                -- earlier in this addon's history. 900s (1.5x) matches the
+                -- margin used back then.
+                stale = (time() - (info.ts or 0)) > 900,
                 linkedMain = info.linkedMain,
                 badge = info.badge,
+                -- '^' broadcast, '~' whisper - defaults to '~' for entries
+                -- saved before the source field existed, rather than nil.
+                marker = info.source == 'broadcast' and '^' or '~',
             }
         end
       end
+    end
+
+    -- /who-only members: seen online via /who discovery but never
+    -- confirmed via the addon protocol (no reply means either they don't
+    -- have the addon, or their reply just hasn't arrived yet) - only added
+    -- for names not already covered by confirmed peer data above, which is
+    -- always more complete and reliable. No badge/alt-link/note: /who
+    -- doesn't provide those, and fabricating them would be misleading.
+    if GreenWallGuildRosterDB.showSourceColumn then
+        local whoDb = GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoSeen or {}
+        for tag, seen in pairs(whoDb) do
+          if tag ~= ns.ownTag then
+            local gname = ns.peerNames and ns.peerNames[tag] or tag
+            local confirmed = db[tag]
+            for name, info in pairs(seen) do
+                if not (confirmed and confirmed[name]) then
+                    list[#list + 1] = {
+                        guild = gname, name = name, level = info.level, classFile = info.classFile,
+                        zone = info.zone, online = true, marker = '*',
+                    }
+                end
+            end
+          end
+        end
     end
 
     -- Counted here, before the showOffline filter below would otherwise
@@ -468,13 +603,13 @@ local function Refresh()
     UpdateHeaderText()
     UpdateLastBroadcastLabel()
     local list = BuildEntries()
-    local col = { {}, {}, {}, {}, {}, {}, {} }
+    local col = { {}, {}, {}, {}, {}, {}, {}, {} }
 
     -- Own guild first, then peers in whatever order they were first seen -
     -- own-guild gold/peer light-blue matches the Guild column's coloring.
     local countParts = {}
     for _, gname in ipairs(guildOrder) do
-        local guildHex = (ns.ownGuild and gname == ns.ownGuild) and 'ffd200' or '5ec4ff'
+        local guildHex = GuildHexFor(gname)
         countParts[#countParts + 1] = ('|cff%s%s|r: %d'):format(guildHex, gname, guildOnlineCounts[gname])
     end
     onlineCountFS:SetText(table.concat(countParts, '   '))
@@ -504,13 +639,16 @@ local function Refresh()
         col[1][#col[1] + 1] = tostring(entry.level or '?')
         col[3][#col[3] + 1] = ('|cff%s%s|r'):format(hex, Clip(entry.name or '?', 22))
         col[4][#col[4] + 1] = Clip(entry.zone or '', 30)
-        local guildHex = (ns.ownGuild and entry.guild == ns.ownGuild) and 'ffd200' or '5ec4ff'
+        local guildHex = GuildHexFor(entry.guild)
         col[5][#col[5] + 1] = ('|cff%s%s|r'):format(guildHex, Clip(entry.guild or '?', 15))
         col[6][#col[6] + 1] = status
         if entry.linkedMain and entry.linkedMain ~= '' then
             col[7][#col[7] + 1] = ('|cff888888%s|r'):format(Clip(entry.linkedMain, 22))
         else
             col[7][#col[7] + 1] = ''
+        end
+        if GreenWallGuildRosterDB.showSourceColumn then
+            col[8][#col[8] + 1] = entry.marker and ('|cff888888%s|r'):format(entry.marker) or ''
         end
     end
 

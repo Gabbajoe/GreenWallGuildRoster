@@ -42,9 +42,21 @@ local function SetMinimapButtonShown(shown)
     if shown then button:Show() else button:Hide() end
 end
 ns.SetMinimapButtonShown = SetMinimapButtonShown
-if GreenWallGuildRosterDB.minimapHidden then
-    button:Hide()
+
+-- Real SavedVariables data isn't injected until right before ADDON_LOADED
+-- fires (see Core.lua's ADDON_LOADED comment) - deciding the button's
+-- initial visibility here at file-load time would always see the stale
+-- default instead of the real saved value. ApplyMinimapButtonVisibility()
+-- is called from Core.lua's ADDON_LOADED handler once the real value has
+-- landed.
+local function ApplyMinimapButtonVisibility()
+    if GreenWallGuildRosterDB.minimapHidden then
+        button:Hide()
+    else
+        button:Show()
+    end
 end
+ns.ApplyMinimapButtonVisibility = ApplyMinimapButtonVisibility
 
 button:SetScript('OnDragStart', function(self)
     self:SetScript('OnUpdate', function()
@@ -94,8 +106,7 @@ end)
 button:SetScript('OnLeave', function() GameTooltip:Hide() end)
 
 -- Native Blizzard Options > AddOns entry, same Settings.RegisterCanvasLayoutCategory
--- API GreenWall itself uses (verified working in this client). Just the one
--- checkbox - not worth a scroll frame or multiple sections for that.
+-- API GreenWall itself uses (verified working in this client).
 local optionsFrame = CreateFrame('Frame', 'GreenWallGuildRosterOptions', UIParent)
 optionsFrame.name = 'GreenWall GuildRoster'
 
@@ -109,8 +120,41 @@ _G[minimapCB:GetName() .. 'Text']:SetText(ns.L['Show minimap button'])
 minimapCB:SetScript('OnClick', function(self)
     SetMinimapButtonShown(self:GetChecked() and true or false)
 end)
+
+if GreenWallGuildRosterDB.showSourceColumn == nil then
+    GreenWallGuildRosterDB.showSourceColumn = false
+end
+local sourceColumnCB = CreateFrame('CheckButton', 'GreenWallGuildRosterSourceColumnCB', optionsFrame, 'UICheckButtonTemplate')
+sourceColumnCB:SetPoint('TOPLEFT', minimapCB, 'BOTTOMLEFT', 0, -8)
+_G[sourceColumnCB:GetName() .. 'Text']:SetText(ns.L['Show data-source column (requires /reload)'])
+sourceColumnCB:SetScript('OnClick', function(self)
+    GreenWallGuildRosterDB.showSourceColumn = self:GetChecked() and true or false
+end)
+
+-- Off by default - this reaches into a third-party addon's (Prat-3.0) own
+-- SavedVariables-backed cache, which not everyone running this addon wants
+-- done automatically on their behalf. See the FeedPratNameCache comment in
+-- Core.lua for what it actually does.
+local pratIntegrationCB = CreateFrame('CheckButton', 'GreenWallGuildRosterPratCB', optionsFrame, 'UICheckButtonTemplate')
+pratIntegrationCB:SetPoint('TOPLEFT', sourceColumnCB, 'BOTTOMLEFT', 0, -8)
+_G[pratIntegrationCB:GetName() .. 'Text']:SetText(ns.L['Show co-guild member levels in Prat-3.0 chat (if installed)'])
+pratIntegrationCB:SetScript('OnClick', function(self)
+    GreenWallGuildRosterDB.pratIntegration = self:GetChecked() and true or false
+end)
+
+local pratIntegrationDesc = optionsFrame:CreateFontString(nil, 'OVERLAY', 'GameFontDisableSmall')
+pratIntegrationDesc:SetPoint('TOPLEFT', pratIntegrationCB, 'BOTTOMLEFT', 24, -2)
+pratIntegrationDesc:SetWidth(520)
+pratIntegrationDesc:SetJustifyH('LEFT')
+pratIntegrationDesc:SetText(('%s |cff5ec4ff[60:Aruthra:S]|r: hi\n%s'):format(
+    ns.L['Example:'],
+    ns.L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r']
+))
+
 optionsFrame:SetScript('OnShow', function()
     minimapCB:SetChecked(not GreenWallGuildRosterDB.minimapHidden)
+    sourceColumnCB:SetChecked(GreenWallGuildRosterDB.showSourceColumn)
+    pratIntegrationCB:SetChecked(GreenWallGuildRosterDB.pratIntegration)
 end)
 
 local category = Settings.RegisterCanvasLayoutCategory(optionsFrame, optionsFrame.name)

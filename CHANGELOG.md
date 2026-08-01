@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.0.3
+
+**Roster window**
+- Guild Master / Officer crown badge detection fixed - was missing some ranks entirely (e.g. a guild's 3rd-highest rank with its own native crown). Now based on `GuildControlGetRankFlags`, re-verified against real data from two independently-configured guilds instead of guessing a rank-index cutoff.
+- Window now closes on Escape, like every other native WoW window.
+- New optional "data source" column (off by default, toggle in Options): marks each row as last confirmed via broadcast, whisper, or seen only via `/who` with no addon on the other end - with a legend next to the Broadcast button. `/who`-only members are now shown in the combined roster at all, not just addon-confirmed ones.
+- Each co-guild beyond your own now gets its own distinct color in the Guild column and online-count line, instead of every peer guild sharing one flat blue.
+- Status column narrowed and the source-marker legend moved to bottom-right, freeing up window width.
+
+**Sync**
+- Outbound `/who` discovery now pings a candidate first instead of immediately sending a full roster - cheaper for the common case of a stranger with no addon, with a 6-second timeout that falls back to a full send if there's no reply (also covers a peer running an older version that doesn't understand a ping).
+- Fixed the combined roster flickering between fully-populated and nearly-empty for large/busy co-guilds: the per-cycle whisper-target floor was capable of dropping to a single random target for guilds needing many sync chunks. Full syncs are now also decoupled from the regular broadcast cadence (every ~10 minutes instead of every cycle) so most cycles are cheap deltas that reach closer to the per-cycle target cap.
+- Online/offline staleness threshold raised to match the new full-sync cadence, so a continuously-online member no longer flickers to "stale" between full syncs.
+- `AutoBroadcast` now fires on a jittered interval (~90-150s, averaging the same ~2 minutes as before) instead of a fixed one, to avoid many clients' cycles lining up around shared events like loading screens.
+
+**Settings**
+- All settings, including the peer/roster sync cache, are now stored per-character instead of shared across your whole account.
+- Optional Prat-3.0 integration (off by default, toggle in Options): shows co-guild members' level and a guild-colored tag right in the `[Level:Name:Tag]` chat bracket for GreenWall-bridged guild/officer chat, with the realm suffix hidden automatically - matching how Prat already formats real guildmates. See the in-panel description for the one remaining manual step (turning off GreenWall's own `<Tag>` chat prefix via `/gw tag off`, to avoid seeing it twice).
+
+**Zone translation**
+- Fixed Wailing Caverns showing up untranslated for English clients viewing a German-client member's zone.
+
+**Localization**
+- Filled in remaining untranslated strings: the source-marker legend, both new Options checkboxes, and `/gwgr exportzones`' help text and output (previously English-only regardless of client language).
+
 ## 1.0.2
 
 **Sync**
