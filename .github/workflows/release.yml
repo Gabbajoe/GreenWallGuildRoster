@@ -24,6 +24,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # CHANGELOG.md keeps full project history for humans browsing the
+      # repo, but the packager's manual-changelog dumps that whole file
+      # into the GitHub Release body verbatim - extract just this
+      # release's own section (from the first "## " heading to the next)
+      # so each release only shows its own notes.
+      - run: awk '/^## /{n++} n==1' CHANGELOG.md > CHANGELOG-release.md
       - uses: BigWigsMods/packager@v2
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}

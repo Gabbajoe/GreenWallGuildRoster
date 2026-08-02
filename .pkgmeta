@@ -1,5 +1,7 @@
 package-as: GreenWallGuildRoster
-manual-changelog: CHANGELOG.md
+manual-changelog: CHANGELOG-release.md
 license-output: LICENSE
 ignore:
   - tests
+  - CURSEFORGE.md
+  - DESCRIPTION.md
