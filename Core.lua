@@ -900,7 +900,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
         EnsureAPIHandler()
         RecordCurrentInstance()
         if not C_AddOns.IsAddOnLoaded('GreenWall') then
-            print('|cffff3333GreenWallGuildRoster|r: ' .. ns.L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall - Revived" from CurseForge) to bridge with your co-guilds.'])
+            print('|cffff3333GreenWallGuildRoster|r: ' .. ns.L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall" from CurseForge) to bridge with your co-guilds.'])
         end
         C_Timer.After(3, function()
             UpdateConfig()

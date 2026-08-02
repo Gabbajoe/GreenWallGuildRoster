@@ -27,7 +27,7 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 
 ## Requirements
 
-- [GreenWall](https://www.curseforge.com/wow/addons/greenwall-revived) (the actively maintained "Revived" fork, v1.12+) already set up and working between your co-guilds. It's a hard dependency, not optional - this addon uses GreenWall's own `GreenWallAPI` to ride its already-established confederation channel, so there's no extra channel/password to configure.
+- [GreenWall](https://www.curseforge.com/wow/addons/greenwall) (v1.12+) already set up and working between your co-guilds. It's a hard dependency, not optional - this addon uses GreenWall's own `GreenWallAPI` to ride its already-established confederation channel, so there's no extra channel/password to configure. The "GreenWall - Revived" fork's changes were merged back into the official GreenWall as of v1.12.0, so there's no longer a reason to use the fork specifically.
 
 ## Installation
 

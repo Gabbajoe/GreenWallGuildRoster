@@ -27,7 +27,7 @@ GreenWall
 ```markdown
 # GreenWall GuildRoster
 
-A companion addon for **GreenWall** ("Revived" fork) that shows a combined roster window for all co-guilds in your confederation — like the native guild roster, but with every alt guild's members mixed into one list.
+A companion addon for **GreenWall** that shows a combined roster window for all co-guilds in your confederation — like the native guild roster, but with every alt guild's members mixed into one list.
 
 ## Why
 
@@ -48,7 +48,7 @@ GreenWall bridges your guild *chat*, but each co-guild's roster still only shows
 
 ## Setup
 
-1. Have GreenWall (the "Revived" fork, v1.12+) already set up and working between your co-guilds.
+1. Have GreenWall (v1.12+) already set up and working between your co-guilds.
 2. That's it — `/reload`. No extra channel or password to configure; this addon rides GreenWall's own confederation channel via its public `GreenWallAPI`.
 
 ## Usage

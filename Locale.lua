@@ -68,6 +68,6 @@ if GetLocale() == 'deDE' then
     L['Main link removed for this character.'] = 'Alt-Verknüpfung für diesen Charakter entfernt.'
     L["You can't set yourself as your own main."] = 'Du kannst dich nicht selbst als eigenes Main setzen.'
     L['%s is now marked as an alt of %s.'] = '%s ist jetzt als Alt von %s markiert.'
-    L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall - Revived" from CurseForge) to bridge with your co-guilds.'] = 'GreenWall ist nicht installiert oder nicht aktiviert - dieses Addon braucht es ("GreenWall - Revived" von CurseForge), um mit euren Co-Gilden zu verbinden.'
+    L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall" from CurseForge) to bridge with your co-guilds.'] = 'GreenWall ist nicht installiert oder nicht aktiviert - dieses Addon braucht es ("GreenWall" von CurseForge), um mit euren Co-Gilden zu verbinden.'
     L['AutoBroadcast: no known online targets in the partner guild.'] = 'AutoBroadcast: keine bekannten Online-Ziele in der Partnergilde.'
 end
