@@ -266,7 +266,7 @@ local function ShowRankInfo(name)
         if rosterName then
             local shortName = rosterName:match('^[^-]+') or rosterName
             if shortName == name then
-                local badge = ns.RankBadge and ns.RankBadge(rankIndex)
+                local badge = ns.RankBadge and ns.RankBadge(rankIndex, C_GuildInfo.GuildControlGetRankFlags)
                 local ok, flags = pcall(C_GuildInfo.GuildControlGetRankFlags, rankIndex)
                 local flagStr = 'n/a'
                 if ok and flags then
@@ -470,20 +470,14 @@ local guildOrder = {}
 
 -- Own guild is always gold; each *other* co-guild gets its own color instead
 -- of sharing one flat blue, so a 3-plus-guild confederation stays visually
--- distinguishable. Assigned lazily, in first-seen order, and cached here
--- (not reset on Refresh) so a guild doesn't change color from one refresh
--- to the next just because the sort order shuffled who's listed first.
-local PEER_GUILD_COLORS = { '5ec4ff', 'ff6ec4', 'c983ff', 'ffa754', '7fffa0', '8c8cff' }
-local peerGuildColorCache = {}
-local nextPeerColorIndex = 1
+-- distinguishable. Palette-cycling logic lives in Logic.lua
+-- (ns.NewPaletteAssigner), shared with Core.lua's Prat tag coloring so both
+-- stay visually consistent instead of each hand-rolling their own cache.
+local nextPeerGuildColor = ns.NewPaletteAssigner()
 local function GuildHexFor(guildName)
     if ns.ownGuild and guildName == ns.ownGuild then return 'ffd200' end
-    if not guildName then return PEER_GUILD_COLORS[1] end
-    if not peerGuildColorCache[guildName] then
-        peerGuildColorCache[guildName] = PEER_GUILD_COLORS[((nextPeerColorIndex - 1) % #PEER_GUILD_COLORS) + 1]
-        nextPeerColorIndex = nextPeerColorIndex + 1
-    end
-    return peerGuildColorCache[guildName]
+    if not guildName then return ns.PEER_COLOR_PALETTE[1] end
+    return nextPeerGuildColor(guildName)
 end
 
 local function BuildEntries()
@@ -500,7 +494,7 @@ local function BuildEntries()
                     guild = ownGuild, name = shortName, level = level,
                     classFile = classFile, zone = zone, note = note, online = online,
                     linkedMain = GreenWallGuildRosterDB.mainLinks and GreenWallGuildRosterDB.mainLinks[shortName],
-                    badge = ns.RankBadge and ns.RankBadge(rankIndex),
+                    badge = ns.RankBadge and ns.RankBadge(rankIndex, C_GuildInfo.GuildControlGetRankFlags),
                 }
             end
         end

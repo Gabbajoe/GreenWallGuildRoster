@@ -7,7 +7,15 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - run: lua5.4 tests/run_tests.lua
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     # Lets the packager create/update the matching GitHub Release (zip
     # asset + notes) using the workflow's own token - without this the

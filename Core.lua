@@ -87,16 +87,14 @@ end
 -- Saftlord/Saftadel), false for every uncrowned one (Milchbar's
 -- Initiand/Mitglied, Saftladen's Fruchttiger/Milchbulle) - 9 for 9, no
 -- exceptions, across two guilds with unrelated custom rank names/orders.
+-- Pure badge-flag logic lives in Logic.lua (ns.RankBadge) so it's unit
+-- testable without a real WoW client; this just supplies the real API call.
 local function RankBadge(rankIndex)
-    if rankIndex == 0 then return '2' end
-    local ok, flags = pcall(C_GuildInfo.GuildControlGetRankFlags, rankIndex)
-    if ok and flags and flags[3] then return '1' end
-    return '0'
+    return ns.RankBadge(rankIndex, C_GuildInfo.GuildControlGetRankFlags)
 end
 
 -- Zone translation table (ZONE_EN_DE, ToCanonicalZone/FromCanonicalZone)
 -- moved to ZoneData.lua, exposed as ns.ToCanonicalZone/ns.FromCanonicalZone.
-ns.RankBadge = RankBadge
 
 -- Online members only. A big guild (900+) turned into hundreds of chunked
 -- SendChatMessage calls fired synchronously, back-to-back, with no way to
@@ -399,16 +397,10 @@ ChatFrame_AddMessageEventFilter('CHAT_MSG_OFFICER', ChatLevelCacheFilter)
 -- Clearing message.SERVER here works the same way ServerNames.lua's own
 -- "hide realm" option does internally, just scoped to bridged senders only
 -- instead of every chat line globally.
-local PEER_TAG_COLORS = { '5ec4ff', 'ff6ec4', 'c983ff', 'ffa754', '7fffa0', '8c8cff' }
-local peerTagColorCache = {}
-local nextPeerTagColorIndex = 1
-local function ColorHexForTag(tag)
-    if not peerTagColorCache[tag] then
-        peerTagColorCache[tag] = PEER_TAG_COLORS[((nextPeerTagColorIndex - 1) % #PEER_TAG_COLORS) + 1]
-        nextPeerTagColorIndex = nextPeerTagColorIndex + 1
-    end
-    return peerTagColorCache[tag]
-end
+-- Palette-cycling logic lives in Logic.lua (ns.NewPaletteAssigner), shared
+-- with RosterFrame.lua's own per-guild coloring so both stay visually
+-- consistent instead of each hand-rolling their own color cache.
+local ColorHexForTag = ns.NewPaletteAssigner()
 
 local PratFrameMessageHook = {}
 function PratFrameMessageHook:Prat_FrameMessage(_, message)
@@ -609,8 +601,8 @@ local function AutoBroadcast(forceFull)
     -- be a name we already knew. Floor 3 costs more messages in that worst
     -- case (up to ~3x a big guild's chunk count in one synchronous burst)
     -- but keeps the addon usable at the guild sizes it's actually run at.
-    local perGuildLimit = math.max(MIN_WHISPER_TARGETS_PER_GUILD,
-        math.min(MAX_WHISPER_TARGETS_PER_GUILD, math.floor(MAX_MESSAGES_PER_GUILD_PER_CYCLE / #chunks)))
+    local perGuildLimit = ns.ComputeWhisperTargetLimit(#chunks, MIN_WHISPER_TARGETS_PER_GUILD,
+        MAX_WHISPER_TARGETS_PER_GUILD, MAX_MESSAGES_PER_GUILD_PER_CYCLE)
     local targets = PickWhisperTargets(perGuildLimit)
     if #targets == 0 then
         if ns.debugAddonMsg then
