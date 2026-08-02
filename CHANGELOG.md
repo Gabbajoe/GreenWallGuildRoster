@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4
+
+**Minimap button**
+- Fixed the button not sitting flush against the minimap ring - the fixed pixel radius used for its orbit position didn't match the actual minimap size. Now computed from the minimap's real size instead of a hardcoded constant.
+- Fixed the button snapping back to the default angle on every login instead of staying where you last dragged it (same class of SavedVariables-timing bug as an earlier fix to the button's visibility).
+
+**Roster window**
+- Fixed `/who`-only members (guild members seen online without the addon) never actually showing up in the window unless "Show data-source column" was also enabled - that checkbox was only ever meant to control the marker column's visibility, not whether those rows appeared at all. If a co-guild has no addon users, this is the only way any of them ever show up.
+- `/who`-only entries now age out after 5 minutes instead of staying listed as "Online" forever after being seen once.
+
 ## 1.0.3
 
 **Roster window**

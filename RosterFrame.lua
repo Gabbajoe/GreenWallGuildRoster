@@ -543,7 +543,13 @@ local function BuildEntries()
     -- for names not already covered by confirmed peer data above, which is
     -- always more complete and reliable. No badge/alt-link/note: /who
     -- doesn't provide those, and fabricating them would be misleading.
-    if GreenWallGuildRosterDB.showSourceColumn then
+    -- Shown regardless of showSourceColumn - that toggle only controls the
+    -- marker column's own visibility (see UpdateHeaderText/Refresh), not
+    -- whether these members exist in the list at all. Gating the whole
+    -- entry on it meant nobody without the column enabled ever saw a
+    -- non-addon co-guild member show up here, which defeats the point of
+    -- collecting whoSeen data in the first place.
+    do
         local whoDb = GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoSeen or {}
         for tag, seen in pairs(whoDb) do
           if tag ~= ns.ownTag then
@@ -551,9 +557,17 @@ local function BuildEntries()
             local confirmed = db[tag]
             for name, info in pairs(seen) do
                 if not (confirmed and confirmed[name]) then
+                    -- /who only ever reflects who was online at the moment
+                    -- of that scan, and scans aren't continuous (30s timer,
+                    -- gated on the next hardware event) - without this a
+                    -- name would stay listed as "Online" forever after
+                    -- being seen once. Same stale/online rendering
+                    -- convention as confirmed peer entries below, just a
+                    -- shorter window matching /who's own faster cadence.
                     list[#list + 1] = {
                         guild = gname, name = name, level = info.level, classFile = info.classFile,
                         zone = info.zone, online = true, marker = '*',
+                        stale = (time() - (info.ts or 0)) > 300,
                     }
                 end
             end

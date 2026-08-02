@@ -787,9 +787,13 @@ local function OnWhoListUpdate()
         if info and info.guild == guildName and info.fullName then
             local shortName = info.fullName:match('^[^-]+') or info.fullName
             if shortName ~= ownName then
+                -- Wall-clock time() here (not the GetTime() used for the
+                -- ping-expiry math above/below) - matches the same
+                -- staleness convention RosterFrame.lua already uses for
+                -- confirmed peer entries.
                 whoSeenStore[shortName] = {
                     level = info.level, classFile = info.filename, zone = info.area,
-                    guild = guildName, ts = now,
+                    guild = guildName, ts = time(),
                 }
             end
             -- Skip anyone already known, and anyone whose ping from an
@@ -898,6 +902,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
             GreenWallGuildRosterDB.pratIntegration = false
         end
         if ns.ApplyMinimapButtonVisibility then ns.ApplyMinimapButtonVisibility() end
+        if ns.ApplyMinimapButtonPosition then ns.ApplyMinimapButtonPosition() end
     elseif event == 'PLAYER_ENTERING_WORLD' then
         C_GuildInfo.GuildRoster()
         EnsureAPIHandler()

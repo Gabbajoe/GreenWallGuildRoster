@@ -31,11 +31,21 @@ button:SetHighlightTexture('Interface\\Buttons\\UI-Common-MouseHilight', 'ADD')
 
 local function UpdatePosition()
     local angle = math.rad(GreenWallGuildRosterDB.minimapAngle or 220)
-    local radius = 105
+    -- Fixed to the actual Minimap size (plus half the button's own size, so
+    -- it sits right on the ring edge) instead of a hardcoded pixel radius -
+    -- a constant value drifted off the visible ring on minimap sizes other
+    -- than whatever the original author had zoomed to.
+    local radius = (Minimap:GetWidth() / 2) + button:GetWidth() / 2 - 6
     button:ClearAllPoints()
     button:SetPoint('CENTER', Minimap, 'CENTER', math.cos(angle) * radius, math.sin(angle) * radius)
 end
-UpdatePosition()
+ns.ApplyMinimapButtonPosition = UpdatePosition
+-- Real SavedVariables data isn't injected until right before ADDON_LOADED
+-- fires (see Core.lua's ADDON_LOADED comment) - calling this here at
+-- file-load time would always read the not-yet-loaded default angle, so
+-- any previously-saved drag position gets silently ignored every login.
+-- Core.lua calls ns.ApplyMinimapButtonPosition() once the real value has
+-- landed instead.
 
 local function SetMinimapButtonShown(shown)
     GreenWallGuildRosterDB.minimapHidden = not shown
