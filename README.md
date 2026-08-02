@@ -1,5 +1,9 @@
 # GreenWall GuildRoster
 
+[![Release](https://github.com/Gabbajoe/GreenWallGuildRoster/actions/workflows/release.yml/badge.svg)](https://github.com/Gabbajoe/GreenWallGuildRoster/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Gabbajoe/GreenWallGuildRoster)](https://github.com/Gabbajoe/GreenWallGuildRoster/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/Gabbajoe/GreenWallGuildRoster)](LICENSE)
+
 A companion addon for [GreenWall](https://github.com/AIE-Guild/GreenWall) that shows a combined roster window for all co-guilds in a GreenWall confederation — like the native guild roster, but with everyone's alt guilds mixed into one list.
 
 ![icon](icon.png)
