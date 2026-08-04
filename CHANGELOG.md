@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5
+
+**Roster window**
+- `/who` discovery (the periodic background scan that finds new addon users in a co-guild) and the roster window's `/who`-only member display are now off by default - opt in via Options > AddOns > GreenWall GuildRoster if you want them.
+- Fixed `/who` discovery permanently getting stuck for the rest of the session if a query never received a reply (server rate-limit, connection hiccup) - it now self-heals instead of silently no-oping every cycle from then on.
+
+**Sync**
+- Fixed a target that can't actually be reached getting spammed with every remaining chunk of a roster sync anyway, each one producing its own "no player named X" system error - now stops after the first failed chunk instead of sending the rest.
+
 ## 1.0.4
 
 **Minimap button**

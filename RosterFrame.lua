@@ -539,11 +539,10 @@ local function BuildEntries()
     -- doesn't provide those, and fabricating them would be misleading.
     -- Shown regardless of showSourceColumn - that toggle only controls the
     -- marker column's own visibility (see UpdateHeaderText/Refresh), not
-    -- whether these members exist in the list at all. Gating the whole
-    -- entry on it meant nobody without the column enabled ever saw a
-    -- non-addon co-guild member show up here, which defeats the point of
-    -- collecting whoSeen data in the first place.
-    do
+    -- whether these members exist in the list at all. Gated on
+    -- whoDiscoveryEnabled instead: the whole /who scanning + display
+    -- subsystem is opt-in, off by default (see Core.lua's RequestWhoQuery).
+    if GreenWallGuildRosterDB.whoDiscoveryEnabled then
         local whoDb = GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoSeen or {}
         for tag, seen in pairs(whoDb) do
           if tag ~= ns.ownTag then

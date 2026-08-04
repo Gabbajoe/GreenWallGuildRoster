@@ -41,6 +41,7 @@ if GetLocale() == 'deDE' then
     L['Show co-guild member levels in Prat-3.0 chat (if installed)'] = 'Level von Co-Gilden-Mitgliedern im Prat-3.0-Chat anzeigen (falls installiert)'
     L['Example:'] = 'Beispiel:'
     L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r'] = 'Damit der Tag nicht doppelt erscheint, zusätzlich GreenWalls eigenen Co-Gilden-Tag abschalten: |cffffd200/gw tag off|r'
+    L['Discover non-addon co-guild members via /who (periodic background scan)'] = 'Nicht-Addon-Mitglieder der Co-Gilde per /who finden (regelmäßiger Hintergrund-Scan)'
     L['^ broadcast   ~ whisper   * /who only (no addon)'] = '^ Broadcast   ~ Flüster   * nur per /who (kein Addon)'
 
     -- Slash command output

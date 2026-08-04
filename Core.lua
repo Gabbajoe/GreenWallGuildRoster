@@ -309,6 +309,12 @@ local function SendFullRosterTo(target)
         if ns.debugAddonMsg then
             print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg (reply) to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
         end
+        -- Enum.SendAddonMessageResult.Success == 0 - anything else means
+        -- this target isn't actually receiving these (observed live: a
+        -- target that fails once fails identically for every remaining
+        -- chunk too), so stop instead of repeating the same visible
+        -- "no player named X" system error once per remaining chunk.
+        if ok ~= 0 then break end
     end
 end
 
@@ -617,6 +623,12 @@ local function AutoBroadcast(forceFull)
             if ns.debugAddonMsg then
                 print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
             end
+            -- Enum.SendAddonMessageResult.Success == 0 - a target that
+            -- fails once fails identically for every remaining chunk too
+            -- (observed live: repeated "no player named X" system errors,
+            -- one per chunk, for a target that can't actually be reached),
+            -- so move on to the next target instead of spamming the rest.
+            if ok ~= 0 then break end
         end
     end
     lastAutoBroadcast = GetTime()
@@ -643,6 +655,10 @@ local MAX_NEW_CONTACTS_PER_WHO_CYCLE = 5
 local WHO_PING_PREFIX = 'GWGR_PING#'
 local pendingWhoTag, pendingWhoGuildName = nil, nil
 local whoQueryOrder, whoQueryIndex = {}, 0
+-- A live /who query's round trip is normally near-instant; 12s is well
+-- past that while staying comfortably under the 30s cycle interval - see
+-- the self-heal timer in DoWhoQuery.
+local WHO_QUERY_TIMEOUT = 12
 
 -- Healthy ping round trip is just two whisper addon-messages (not
 -- protected/hardware-gated, unlike SendWho/SendChatMessage elsewhere in
@@ -731,9 +747,31 @@ local function DoWhoQuery()
     end
     C_FriendList.SetWhoToUi(true)
     C_FriendList.SendWho(('g-"%s"'):format(guildName))
+
+    -- Self-heals a query that never gets a WHO_LIST_UPDATE reply (server
+    -- rate-limit, connection hiccup) - without this, pendingWhoTag stays
+    -- set forever and the guard at the top of this function silently
+    -- no-ops every future /who discovery cycle for the rest of the
+    -- session, until a /reload.
+    C_Timer.After(WHO_QUERY_TIMEOUT, function()
+        if pendingWhoTag == tag then
+            if ns.debugAddonMsg then
+                print(('|cff33ff99GreenWallGuildRoster|r: /who query for tag %s never got a reply, clearing to avoid a stuck discovery loop.'):format(tag))
+            end
+            pendingWhoTag, pendingWhoGuildName = nil, nil
+        end
+    end)
 end
 
+-- Single upstream gate for the whole /who discovery chain - off by
+-- default. If this never sets whoQueryDue, DoWhoQuery never fires,
+-- pendingWhoTag never gets set, and OnWhoListUpdate's own
+-- "if not pendingWhoTag then return end" guard means everything downstream
+-- (SendWhoPing, SendWhoPingFallback, whoSeen collection) stops too, with no
+-- changes needed there. Checked live on every 30s tick rather than once, so
+-- this can't get stuck on a stale pre-ADDON_LOADED default.
 local function RequestWhoQuery()
+    if not (GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoDiscoveryEnabled) then return end
     whoQueryDue = true
 end
 
@@ -892,6 +930,9 @@ frame:SetScript('OnEvent', function(_, event, ...)
         GreenWallGuildRosterDB.whoSeen = GreenWallGuildRosterDB.whoSeen or {}
         if GreenWallGuildRosterDB.pratIntegration == nil then
             GreenWallGuildRosterDB.pratIntegration = false
+        end
+        if GreenWallGuildRosterDB.whoDiscoveryEnabled == nil then
+            GreenWallGuildRosterDB.whoDiscoveryEnabled = false
         end
         if ns.ApplyMinimapButtonVisibility then ns.ApplyMinimapButtonVisibility() end
         if ns.ApplyMinimapButtonPosition then ns.ApplyMinimapButtonPosition() end
