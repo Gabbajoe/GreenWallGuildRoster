@@ -39,14 +39,3 @@ local function RankBadge(rankIndex, getFlags)
     return '0'
 end
 ns.RankBadge = RankBadge
-
--- Per-cycle whisper-sync target count for a guild needing this many
--- message chunks: capped at maxTargets, but never allowed to floor below
--- minTargets even for a guild needing many chunks. A floor of 1 here once
--- let the combined roster flicker between fully-populated and nearly-empty
--- for large/busy co-guilds, since only one random target got synced per
--- cycle for exactly the guilds needing the most reach.
-local function ComputeWhisperTargetLimit(chunkCount, minTargets, maxTargets, messageBudget)
-    return math.max(minTargets, math.min(maxTargets, math.floor(messageBudget / chunkCount)))
-end
-ns.ComputeWhisperTargetLimit = ComputeWhisperTargetLimit

@@ -39,14 +39,6 @@ local function check(condition, label)
     end
 end
 
--- ComputeWhisperTargetLimit -------------------------------------------------
--- Regression guard for the exact bug that once made large co-guild syncs
--- flicker between fully-populated and nearly-empty: a busy guild needing
--- many message chunks must never floor below the minimum target count.
-eq(ns.ComputeWhisperTargetLimit(18, 3, 6, 15), 3, 'busy guild (18 chunks) floors to the minimum, not lower')
-eq(ns.ComputeWhisperTargetLimit(1, 3, 6, 15), 6, 'quiet guild (1 chunk) caps at the maximum')
-eq(ns.ComputeWhisperTargetLimit(3, 3, 6, 15), 5, 'mid-size guild (3 chunks) uses the plain floor() value')
-
 -- RankBadge -------------------------------------------------------------
 -- Locked in against the real, empirically-verified flag data from two
 -- independently-configured guilds - guards against regressing to either of

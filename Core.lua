@@ -333,9 +333,14 @@ end
 -- /who guesses that produced the repeated "player not reachable" messages.
 local HELLO_PREFIX = 'GWGR_HELLO#'
 local ACK_PREFIX = 'GWGR_ACK#'
+local LOCAL_GUILD_PREFIX = 'GWGR_LOCAL#'
 local HELLO_RETRY_SECONDS = 900
 local SYNC_COOLDOWN_SECONDS = 600
-local pendingHello = {}
+local HANDSHAKE_DISPATCH_INTERVAL = 30
+local presence = {}
+local handshakeState = {}
+local handshakeQueue = {}
+local handshakeQueued = {}
 local acceptedHello = {}
 
 local function ClientKey(name)
@@ -356,25 +361,71 @@ local function SendControlMessage(target, message, label)
         end)
 end
 
+-- One confirmed cross-guild exchange is enough for every GuildRoster user
+-- in the sender's own guild. Re-distribute received chunks via the normal
+-- guild addon channel instead of making each local client repeat the same
+-- full whisper sync independently.
+local function SendLocalGuildPayload(tag, payload)
+    ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX,
+        LOCAL_GUILD_PREFIX .. tag .. '#' .. payload, 'GUILD', nil,
+        ADDON_MSG_PREFIX .. ':guild:' .. tag)
+end
+
 local function QueueHandshake(player)
     if not ns.ownTag or not player or player == '' then return end
     local ownName = UnitName('player')
     if player:match('^[^-]+') == ownName then return end
 
     local key, now = ClientKey(player), GetTime()
-    local pending = pendingHello[key]
-    if pending and pending.retryAfter > now then return end
+    presence[key] = player
+    local state = handshakeState[key]
+    if (state and state.retryAfter > now) or handshakeQueued[key] then return end
 
-    -- Jitter prevents every client seeing the same channel join from
-    -- submitting its control message in exactly the same frame.
-    local nonce = tostring(math.random(100000, 999999))
-    pendingHello[key] = { nonce = nonce, retryAfter = now + HELLO_RETRY_SECONDS }
-    C_Timer.After(math.random(2, 5), function()
-        local current = pendingHello[key]
-        if current and current.nonce == nonce then
+    -- The queue deliberately releases just one HELLO every 30 seconds.
+    -- A large guild therefore cannot turn one channel join into a burst of
+    -- dozens of whispers or full-roster transfers; every visible client is
+    -- eventually considered, including clients already present at login.
+    handshakeQueued[key] = true
+    handshakeQueue[#handshakeQueue + 1] = key
+end
+
+local function ServiceHandshakeQueue()
+    local now = GetTime()
+    while #handshakeQueue > 0 do
+        local key = table.remove(handshakeQueue, 1)
+        handshakeQueued[key] = nil
+        local player = presence[key]
+        local state = handshakeState[key]
+        if player and (not state or state.retryAfter <= now) then
+            local nonce = tostring(math.random(100000, 999999))
+            handshakeState[key] = { nonce = nonce, retryAfter = now + HELLO_RETRY_SECONDS }
             SendControlMessage(player, HELLO_PREFIX .. ns.ownTag .. '#' .. nonce, 'TX handshake to')
+            return
         end
-    end)
+    end
+end
+
+local function QueueDueHandshakes()
+    for _, player in pairs(presence) do
+        QueueHandshake(player)
+    end
+end
+
+local function RefreshChannelPresence()
+    if not GreenWallAPI or not GreenWallAPI.GetChannelNumbers
+        or not GetNumChannelMembers or not GetChannelRosterInfo then return end
+    local guildChannel = GreenWallAPI.GetChannelNumbers()[1]
+    if not guildChannel or guildChannel == 0 then return end
+
+    -- Channel join events only describe changes after the addon is loaded.
+    -- Enumerating the current roster closes the "everyone was already
+    -- online when I logged in" gap without using /who.
+    wipe(presence)
+    local memberCount = GetNumChannelMembers(guildChannel) or 0
+    for index = 1, memberCount do
+        local player = GetChannelRosterInfo(guildChannel, index)
+        if player and player ~= '' then QueueHandshake(player) end
+    end
 end
 
 local function HandlePresence(player, joined)
@@ -383,7 +434,9 @@ local function HandlePresence(player, joined)
         QueueHandshake(player)
     else
         -- A client that left the bridge is no longer a valid sync target.
-        pendingHello[key] = nil
+        presence[key] = nil
+        handshakeState[key] = nil
+        handshakeQueued[key] = nil
     end
 end
 
@@ -615,14 +668,21 @@ local function OnAddonMessage(prefix, message, channel, sender)
         print(('|cff33ff99GreenWallGuildRoster|r: RX addon-msg channel=%s sender=%s'):format(
             tostring(channel), tostring(sender)))
     end
+    if channel == 'GUILD' then
+        local tag, payload = message:match('^' .. LOCAL_GUILD_PREFIX .. '(%a+)#(.*)$')
+        if tag and payload then
+            MergePeerPayload(tag, payload, nil, 'whisper')
+        end
+        return
+    end
     if channel ~= 'WHISPER' then return end
 
     local helloTag, helloNonce = message:match('^' .. HELLO_PREFIX .. '(%a+)#(%d+)$')
     if helloTag then
-        -- A peer may receive many HELLOs when it joins.  It acknowledges
-        -- only one client per co-guild during the cooldown, so the join
-        -- produces one roster exchange rather than every visible client
-        -- sending the same full roster.
+        -- One acknowledged sender per co-guild is sufficient: received
+        -- chunks are fanned out to the sender's own guild through the safe
+        -- GUILD addon-message channel below. This prevents every visible
+        -- client from triggering the same full whisper sync.
         if helloTag ~= ns.ownTag and ns.peerNames[helloTag] then
             local now = GetTime()
             if not acceptedHello[helloTag] or acceptedHello[helloTag] <= now then
@@ -635,9 +695,12 @@ local function OnAddonMessage(prefix, message, channel, sender)
 
     local ackTag, ackNonce = message:match('^' .. ACK_PREFIX .. '(%a+)#(%d+)$')
     if ackTag then
-        local pending = pendingHello[ClientKey(sender)]
+        local pending = handshakeState[ClientKey(sender)]
         if pending and pending.nonce == ackNonce and ackTag ~= ns.ownTag and ns.peerNames[ackTag] then
-            pendingHello[ClientKey(sender)] = nil
+            -- Keep a successful pair quiet until the normal sync cooldown
+            -- elapses, then let the presence queue consider it again.
+            pending.nonce = nil
+            pending.retryAfter = GetTime() + SYNC_COOLDOWN_SECONDS
             -- Keep the expensive roster transfer outside the join event and
             -- behind a successful acknowledgement.
             C_Timer.After(math.random(3, 8), function()
@@ -649,6 +712,9 @@ local function OnAddonMessage(prefix, message, channel, sender)
 
     local tag, payload = message:match('^(%a+)#(.*)$')
     MergePeerPayload(tag, payload, sender, 'whisper')
+    if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag] then
+        SendLocalGuildPayload(tag, payload)
+    end
 end
 
 local apiHandlerRegistered = false
@@ -720,6 +786,10 @@ frame:SetScript('OnEvent', function(_, event, ...)
         end
         C_Timer.After(3, function()
             UpdateConfig()
+            RefreshChannelPresence()
+            -- Desynchronize clients that loaded during the same loading
+            -- screen before releasing the first queued HELLO.
+            C_Timer.After(math.random(2, 5), ServiceHandshakeQueue)
             -- Backfill Prat's name cache from peer data already known from
             -- a previous session, so chat lines look right immediately at
             -- login instead of only after the next sync updates someone.
@@ -739,6 +809,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
     elseif event == 'GUILD_ROSTER_UPDATE' then
         EnsureAPIHandler()
         UpdateConfig()
+        C_Timer.After(2, RefreshChannelPresence)
         RequestRefresh()
     elseif event == 'CHAT_MSG_ADDON' then
         OnAddonMessage(...)
@@ -750,15 +821,18 @@ frame:SetScript('OnEvent', function(_, event, ...)
     end
 end)
 
--- Addon messages aren't protected, so this can run unattended. Jittered
--- 90-150s (average still 120s, matching FULL_SYNC_INTERVAL) instead of a
--- fixed interval - every client's ticker otherwise starts from whatever
--- moment they logged in/reloaded, which tends to correlate around shared
--- events (a raid's loading screen, a server-wide lag spike after a big
--- pull), risking a burst of many clients' cycles firing back-to-back
--- instead of spread out. C_Timer.NewTicker can't do a variable interval,
--- so this reschedules itself with a fresh random delay each time rather
--- than a single fixed-period ticker.
+-- Retry presence-confirmed peers only. This never consults /who or the old
+-- roster cache; a target that leaves the GreenWall channel is removed at
+-- once and cannot be retried until it appears again.
+local function ScheduleHandshakeService()
+    C_Timer.After(math.random(HANDSHAKE_DISPATCH_INTERVAL - 5, HANDSHAKE_DISPATCH_INTERVAL + 5), function()
+        QueueDueHandshakes()
+        ServiceHandshakeQueue()
+        ScheduleHandshakeService()
+    end)
+end
+ScheduleHandshakeService()
+
 ns.Broadcast = Broadcast
 
 SLASH_GWGROSTER1 = '/gwgr'

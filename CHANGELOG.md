@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.8
+
+**Sync**
+- Presence sync now enumerates GreenWall's current guild-channel members after login, so clients that were already online are considered without `/who` or a new channel join.
+- Added a paced handshake queue: each client sends at most one HELLO per 30-second service interval and retries only still-present clients after a cooldown. One acknowledged cross-guild exchange is then fanned out to all GuildRoster users in the sender's own guild through the normal guild addon-message channel, retaining the one-winner ACK gate without leaving other local clients unsynced.
+- Removed the obsolete cache-broadcast target-limit helper and its tests.
+
 ## 1.0.7
 
 **Sync**
