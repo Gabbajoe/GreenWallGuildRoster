@@ -41,14 +41,12 @@ if GetLocale() == 'deDE' then
     L['Show co-guild member levels in Prat-3.0 chat (if installed)'] = 'Level von Co-Gilden-Mitgliedern im Prat-3.0-Chat anzeigen (falls installiert)'
     L['Example:'] = 'Beispiel:'
     L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r'] = 'Damit der Tag nicht doppelt erscheint, zusätzlich GreenWalls eigenen Co-Gilden-Tag abschalten: |cffffd200/gw tag off|r'
-    L['Discover non-addon co-guild members via /who (periodic background scan)'] = 'Nicht-Addon-Mitglieder der Co-Gilde per /who finden (regelmäßiger Hintergrund-Scan)'
-    L['^ broadcast   ~ whisper   * /who only (no addon)'] = '^ Broadcast   ~ Flüster   * nur per /who (kein Addon)'
+    L['^ broadcast   ~ whisper'] = '^ Broadcast   ~ Flüster'
 
     -- Slash command output
     L['GreenWallGuildRoster commands:'] = 'GreenWallGuildRoster Befehle:'
     L['/gwgr - open/close the roster window'] = '/gwgr - Roster-Fenster öffnen/schließen'
     L["/gwgr broadcast - send a full roster snapshot over GreenWall's confederation channel (GreenWallAPI)"] = '/gwgr broadcast - vollen Roster-Stand über GreenWalls Konföderations-Kanal senden (GreenWallAPI)'
-    L['/gwgr auto - force an immediate full sync over the whisper channel (for testing)'] = '/gwgr auto - sofortigen vollen Sync über den Whisper-Kanal erzwingen (zum Testen)'
     L["/gwgr setmain <name> - mark the character you're on as an alt of <name>; no name clears it"] = '/gwgr setmain <Name> - diesen Charakter als Alt von <Name> markieren; ohne Namen wird es entfernt'
     L['/gwgr status - show GreenWallAPI availability, own tag, and known confederation tags'] = '/gwgr status - zeigt GreenWallAPI-Verfügbarkeit, eigenes Tag und bekannte Konföderations-Tags'
     L['/gwgr debug - toggle addon-message RX/TX logging'] = '/gwgr debug - Addon-Message RX/TX-Logging umschalten'
@@ -58,7 +56,6 @@ if GetLocale() == 'deDE' then
     L['Exported %d zone names for locale "%s" into SavedVariables.'] = '%d Zonennamen für Sprache "%s" in die SavedVariables exportiert.'
     L['/reload or log out to flush to disk, then find GreenWallGuildRosterDB.zoneExport in your SavedVariables/GreenWallGuildRoster.lua and send it over.'] = '/reload oder ausloggen zum Speichern, dann GreenWallGuildRosterDB.zoneExport in deiner SavedVariables/GreenWallGuildRoster.lua suchen und rüberschicken.'
 
-    L['Force full AutoBroadcast (addon message, all online members)...'] = 'Löse vollen AutoBroadcast aus (Addon-Message, alle Online-Mitglieder)...'
     L['Broadcast sent.'] = 'Broadcast gesendet.'
     L['GreenWallAPI=%s, own tag=%s'] = 'GreenWallAPI=%s, eigenes Tag=%s'
     L['Known confederation tags: %s'] = 'Bekannte Konföderations-Tags: %s'
@@ -70,5 +67,4 @@ if GetLocale() == 'deDE' then
     L["You can't set yourself as your own main."] = 'Du kannst dich nicht selbst als eigenes Main setzen.'
     L['%s is now marked as an alt of %s.'] = '%s ist jetzt als Alt von %s markiert.'
     L['GreenWall is not installed or not enabled - this addon needs it (get "GreenWall" from CurseForge) to bridge with your co-guilds.'] = 'GreenWall ist nicht installiert oder nicht aktiviert - dieses Addon braucht es ("GreenWall" von CurseForge), um mit euren Co-Gilden zu verbinden.'
-    L['AutoBroadcast: no known online targets in the partner guild.'] = 'AutoBroadcast: keine bekannten Online-Ziele in der Partnergilde.'
 end

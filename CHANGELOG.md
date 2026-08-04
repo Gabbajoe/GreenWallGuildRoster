@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7
+
+**Sync**
+- Removed `/who` discovery completely, including its timer, input hooks, ping/fallback whisper traffic, roster rows, option, and cached data. `/who` results never establish that a player has GuildRoster installed or can currently receive a whisper, so they are not a valid synchronization target.
+- Replaced periodic cache-based whisper broadcasts with a GreenWall-channel-presence handshake. A full roster is exchanged only after a recently joined client confirms that GuildRoster is installed; acknowledgements are limited to one client per co-guild during a cooldown. The old automatic and `/gwgr auto` cache-sync paths are no longer invoked.
+
 ## 1.0.6
 
 **Sync**

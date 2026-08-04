@@ -161,22 +161,10 @@ pratIntegrationDesc:SetText(('%s |cff5ec4ff[60:Aruthra:S]|r: hi\n%s'):format(
     ns.L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r']
 ))
 
--- Off by default - periodically scans /who for each co-guild to find new
--- addon users and, once found here, also shows non-addon co-guild members
--- in the roster window (marked *). See Core.lua's RequestWhoQuery for the
--- single gate that controls the whole subsystem.
-local whoDiscoveryCB = CreateFrame('CheckButton', 'GreenWallGuildRosterWhoDiscoveryCB', optionsFrame, 'UICheckButtonTemplate')
-whoDiscoveryCB:SetPoint('TOPLEFT', pratIntegrationDesc, 'BOTTOMLEFT', -24, -8)
-_G[whoDiscoveryCB:GetName() .. 'Text']:SetText(ns.L['Discover non-addon co-guild members via /who (periodic background scan)'])
-whoDiscoveryCB:SetScript('OnClick', function(self)
-    GreenWallGuildRosterDB.whoDiscoveryEnabled = self:GetChecked() and true or false
-end)
-
 optionsFrame:SetScript('OnShow', function()
     minimapCB:SetChecked(not GreenWallGuildRosterDB.minimapHidden)
     sourceColumnCB:SetChecked(GreenWallGuildRosterDB.showSourceColumn)
     pratIntegrationCB:SetChecked(GreenWallGuildRosterDB.pratIntegration)
-    whoDiscoveryCB:SetChecked(GreenWallGuildRosterDB.whoDiscoveryEnabled)
 end)
 
 local category = Settings.RegisterCanvasLayoutCategory(optionsFrame, optionsFrame.name)

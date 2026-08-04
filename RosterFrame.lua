@@ -393,7 +393,7 @@ lastBroadcastFS:SetPoint('LEFT', broadcastBtn, 'RIGHT', 10, 0)
 -- from Refresh, always safely after data has loaded.
 local legendFS = frame:CreateFontString(nil, 'OVERLAY', 'GameFontDisableSmall')
 legendFS:SetPoint('BOTTOMRIGHT', frame, 'BOTTOMRIGHT', -16, 17)
-legendFS:SetText(ns.L['^ broadcast   ~ whisper   * /who only (no addon)'])
+legendFS:SetText(ns.L['^ broadcast   ~ whisper'])
 
 -- No auto-broadcast (see Core.lua), so this is a passive nudge: color goes
 -- from green to red the staler your last broadcast gets, as a reminder to
@@ -529,43 +529,6 @@ local function BuildEntries()
             }
         end
       end
-    end
-
-    -- /who-only members: seen online via /who discovery but never
-    -- confirmed via the addon protocol (no reply means either they don't
-    -- have the addon, or their reply just hasn't arrived yet) - only added
-    -- for names not already covered by confirmed peer data above, which is
-    -- always more complete and reliable. No badge/alt-link/note: /who
-    -- doesn't provide those, and fabricating them would be misleading.
-    -- Shown regardless of showSourceColumn - that toggle only controls the
-    -- marker column's own visibility (see UpdateHeaderText/Refresh), not
-    -- whether these members exist in the list at all. Gated on
-    -- whoDiscoveryEnabled instead: the whole /who scanning + display
-    -- subsystem is opt-in, off by default (see Core.lua's RequestWhoQuery).
-    if GreenWallGuildRosterDB.whoDiscoveryEnabled then
-        local whoDb = GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoSeen or {}
-        for tag, seen in pairs(whoDb) do
-          if tag ~= ns.ownTag then
-            local gname = ns.peerNames and ns.peerNames[tag] or tag
-            local confirmed = db[tag]
-            for name, info in pairs(seen) do
-                if not (confirmed and confirmed[name]) then
-                    -- /who only ever reflects who was online at the moment
-                    -- of that scan, and scans aren't continuous (30s timer,
-                    -- gated on the next hardware event) - without this a
-                    -- name would stay listed as "Online" forever after
-                    -- being seen once. Same stale/online rendering
-                    -- convention as confirmed peer entries below, just a
-                    -- shorter window matching /who's own faster cadence.
-                    list[#list + 1] = {
-                        guild = gname, name = name, level = info.level, classFile = info.classFile,
-                        zone = info.zone, online = true, marker = '*',
-                        stale = (time() - (info.ts or 0)) > 300,
-                    }
-                end
-            end
-          end
-        end
     end
 
     -- Counted here, before the showOffline filter below would otherwise

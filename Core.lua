@@ -116,17 +116,9 @@ local MAX_BROADCAST_ROWS = 200
 -- staleness flag off however long since they last heard about someone at
 -- all.
 --
--- Deliberately decoupled from the AutoBroadcast cycle itself (~90-150s,
--- see ScheduleAutoBroadcast) rather than matching it 1:1 like it used to -
--- with them synced, *every* cycle was a full sync, and a full sync's much
--- larger chunk count is exactly what collapses perGuildLimit down toward
--- MIN_WHISPER_TARGETS_PER_GUILD for a big guild (see AutoBroadcast). Most
--- cycles are now a plain delta instead (typically just whoever's login/
--- logout state actually changed in the last couple minutes - usually 1
--- chunk), which stays small enough to reach close to
--- MAX_WHISPER_TARGETS_PER_GUILD almost every time; the expensive,
--- floor-limited full sync now only happens once every 10 minutes instead
--- of every single cycle.
+-- Full snapshots are sent only after a presence-confirmed handshake. The
+-- timestamp still bounds how often a sender includes unchanged online rows
+-- if several confirmed exchanges happen during one session.
 local lastOnlineSet = {}
 local lastFullSyncTime = 0
 local FULL_SYNC_INTERVAL = 600
@@ -145,7 +137,7 @@ local lastKnownMembers = {}
 -- glitchy read broadcast "everyone left" for the whole guild, and every
 -- peer receiving it deleted their entire cache of that guild's members.
 -- Requiring the same name to be missing on two scans in a row (they run
--- every FULL_SYNC_INTERVAL/AutoBroadcast cycle) means a one-off blip
+-- every roster collection) means a one-off blip
 -- self-corrects on the very next scan instead of propagating.
 local MISSING_STREAK_THRESHOLD = 3
 local missingStreak = {}
@@ -325,15 +317,84 @@ local function SendChunkedTo(target, chunks, debugLabel)
 end
 
 -- Sends a full roster snapshot to one specific whisper target - the same
--- payload/chunking AutoBroadcast uses, just aimed at a single name instead
--- of a picked set. Shared by the ping-reply and the first-contact reply
--- in MergePeerPayload below.
+-- payload/chunking used by the presence-confirmed whisper path. Shared by
+-- the handshake initiator and the first-contact reply in MergePeerPayload.
 local function SendFullRosterTo(target)
     if not ns.ownTag then return end
     local rows = CollectOwnRoster(true)
     if #rows == 0 then return end
     local chunks = ChunkRows(rows, 200)
     SendChunkedTo(target, chunks, ' (reply)')
+end
+
+-- A client is only eligible for a roster whisper after it was seen joining
+-- GreenWall's shared channel and answered this small handshake.  Presence
+-- does not guarantee delivery forever, but it avoids the stale-cache and
+-- /who guesses that produced the repeated "player not reachable" messages.
+local HELLO_PREFIX = 'GWGR_HELLO#'
+local ACK_PREFIX = 'GWGR_ACK#'
+local HELLO_RETRY_SECONDS = 900
+local SYNC_COOLDOWN_SECONDS = 600
+local pendingHello = {}
+local acceptedHello = {}
+
+local function ClientKey(name)
+    -- CHAT_MSG_CHANNEL_* and CHAT_MSG_ADDON do not consistently include a
+    -- realm suffix on every Classic client. The bridge channel is realm
+    -- scoped, so the short character name is the stable key for matching a
+    -- JOIN with its later ADDON acknowledgement.
+    return name and (name:match('^[^-]+') or name):lower() or ''
+end
+
+local function SendControlMessage(target, message, label)
+    ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX, message, 'WHISPER', target,
+        ADDON_MSG_PREFIX .. ':control:' .. target, function(_, didSend, sendResult)
+            if ns.debugAddonMsg then
+                print(('|cff33ff99GreenWallGuildRoster|r: %s %s didSend=%s sendResult=%s'):format(
+                    label, target, tostring(didSend), tostring(sendResult)))
+            end
+        end)
+end
+
+local function QueueHandshake(player)
+    if not ns.ownTag or not player or player == '' then return end
+    local ownName = UnitName('player')
+    if player:match('^[^-]+') == ownName then return end
+
+    local key, now = ClientKey(player), GetTime()
+    local pending = pendingHello[key]
+    if pending and pending.retryAfter > now then return end
+
+    -- Jitter prevents every client seeing the same channel join from
+    -- submitting its control message in exactly the same frame.
+    local nonce = tostring(math.random(100000, 999999))
+    pendingHello[key] = { nonce = nonce, retryAfter = now + HELLO_RETRY_SECONDS }
+    C_Timer.After(math.random(2, 5), function()
+        local current = pendingHello[key]
+        if current and current.nonce == nonce then
+            SendControlMessage(player, HELLO_PREFIX .. ns.ownTag .. '#' .. nonce, 'TX handshake to')
+        end
+    end)
+end
+
+local function HandlePresence(player, joined)
+    local key = ClientKey(player)
+    if joined then
+        QueueHandshake(player)
+    else
+        -- A client that left the bridge is no longer a valid sync target.
+        pendingHello[key] = nil
+    end
+end
+
+local function IsGuildChannel(number)
+    if not GreenWallAPI or not GreenWallAPI.GetChannelNumbers then return false end
+    -- GetChannelNumbers returns the normal guild bridge first and the
+    -- optional officer bridge second. Roster presence belongs only to the
+    -- normal bridge; using the officer channel too would create duplicate
+    -- handshakes for officers.
+    local guildChannel = GreenWallAPI.GetChannelNumbers()[1]
+    return guildChannel ~= 0 and guildChannel == number
 end
 
 
@@ -544,321 +605,6 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
     MergePeerPayload(tag, payload, sender, 'broadcast')
 end
 
--- Automatic transport: addon messages. Turns out Classic disables
--- SendAddonMessage's 'CHANNEL' target specifically ("to prevent players
--- communicating over custom chat channels" - confirmed via
--- Enum.SendAddonMessageResult.InvalidChatType on every attempt), so this
--- targets 'WHISPER' instead, at a handful of co-guild members we already
--- know are online from the last data we received. Whisper-target addon
--- messages aren't gated behind a direct user action the way
--- SendChatMessage is, so this can run unattended from timers/events.
---
--- No handshake/reachability check before whispering: if a target logged
--- off or doesn't have the addon, the message just goes nowhere, silently
--- and harmlessly. Trying a few targets each cycle, every few minutes,
--- with both sides doing this simultaneously, is enough redundancy without
--- needing to first verify anyone can "answer".
--- Rather than a fixed target count, bound the actual thing that matters
--- for flood-safety: total addon messages fired in one synchronous burst
--- (targets * chunks-per-target). A small guild or a small delta (few
--- chunks) can safely reach more people within the same budget; a big
--- full sync with many chunks stays conservative automatically. Hardware/
--- FPS isn't a relevant signal here - the real constraint is Blizzard's
--- server-side addon-message rate limiting, which is the same for every
--- client and isn't exposed to addons to measure anyway.
--- What this actually controls: the total whisper messages sent to one
--- co-guild's targets in a single cycle (targets * chunks-per-target stays
--- roughly at this ceiling, by construction, whenever MIN doesn't override
--- it below - see perGuildLimit below).
-local MAX_MESSAGES_PER_GUILD_PER_CYCLE = 15
-local MIN_WHISPER_TARGETS_PER_GUILD = 3
-local MAX_WHISPER_TARGETS_PER_GUILD = 6
--- Picking straight off pairs() iteration order means the same handful of
--- names would get hit cycle after cycle (Lua's table iteration order is
--- stable between calls unless the table is mutated) - if those particular
--- few happen to be offline or without the addon, sync stalls even though
--- plenty of other known members could carry it. Shuffling the full
--- candidate pool before capping spreads whisper traffic across everyone
--- we know about over time instead of hammering the same 2-3 people.
-local function PickWhisperTargets(perGuildLimit)
-    local targets = {}
-    for tag, members in pairs(GreenWallGuildRosterDB.peers or {}) do
-        if tag ~= ns.ownTag and ns.peerNames[tag] then
-            local candidates = {}
-            for name, info in pairs(members) do
-                if info.online then
-                    candidates[#candidates + 1] = name
-                end
-            end
-            for i = #candidates, 2, -1 do
-                local j = math.random(i)
-                candidates[i], candidates[j] = candidates[j], candidates[i]
-            end
-            for i = 1, math.min(perGuildLimit, #candidates) do
-                targets[#targets + 1] = candidates[i]
-            end
-        end
-    end
-    return targets
-end
-
-local lastAutoBroadcast = 0
--- forceFull: same idea as Broadcast()'s forceFull - "/gwgr auto" is meant
--- for testing the whisper transport on demand, so it should actually
--- push a full snapshot rather than possibly finding an empty delta and
--- silently doing nothing.
-local function AutoBroadcast(forceFull)
-    if not ns.ownTag then return end
-    if not next(GreenWallGuildRosterDB.peers or {}) then return end
-
-    local rows = CollectOwnRoster(forceFull)
-    if #rows == 0 then return end
-    local chunks = ChunkRows(rows, 200)
-
-    -- MIN_WHISPER_TARGETS_PER_GUILD raised from 1 to 3: for a large, busy
-    -- guild a full sync can run to 15-20+ chunks (confirmed live - a
-    -- ~45-online guild needed ~18), and MAX_MESSAGES_PER_GUILD_PER_CYCLE /
-    -- chunks rounds down to 0 well before that. A floor of 1 meant only a
-    -- single lucky target got synced per cycle for exactly the guilds
-    -- where broad reach matters most - observed live as the combined
-    -- roster flickering between "fully populated" and "down to one name"
-    -- every other cycle, depending on whether that one target happened to
-    -- be a name we already knew. Floor 3 costs more messages in that worst
-    -- case (up to ~3x a big guild's chunk count in one synchronous burst)
-    -- but keeps the addon usable at the guild sizes it's actually run at.
-    local perGuildLimit = ns.ComputeWhisperTargetLimit(#chunks, MIN_WHISPER_TARGETS_PER_GUILD,
-        MAX_WHISPER_TARGETS_PER_GUILD, MAX_MESSAGES_PER_GUILD_PER_CYCLE)
-    local targets = PickWhisperTargets(perGuildLimit)
-    if #targets == 0 then
-        if ns.debugAddonMsg then
-            print('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['AutoBroadcast: no known online targets in the partner guild.'])
-        end
-        return
-    end
-
-    for _, target in ipairs(targets) do
-        SendChunkedTo(target, chunks)
-    end
-    lastAutoBroadcast = GetTime()
-end
-
--- WHO-based discovery: finds peer guild members without needing anyone to
--- click Broadcast first. Query syntax (g-"GuildName") and the
--- SetWhoToUi/event-suppression technique are verified against
--- DeathNotificationLib and Deathlog's own /who usage (both installed,
--- both confirmed working in this exact client), not guessed.
---
--- New /who-discovered names get pinged first rather than sent our full
--- roster directly - cheaper against the majority of /who results, who
--- don't have this addon at all. A ping-first design only works once BOTH
--- sides recognize the ping format, so a timeout fallback (see
--- SendWhoPingFallback) still sends the full roster directly to anyone who
--- doesn't reply in time - covers both genuine non-addon strangers and any
--- addon version too old to answer a ping, at the cost of one extra
--- WHO_PING_TIMEOUT of delay for those specifically. Capped per cycle
--- (MAX_NEW_CONTACTS_PER_WHO_CYCLE) rather than everyone /who turns up (up
--- to ~50) - that cap is what actually keeps this flood-safe, the same way
--- it already bounds AutoBroadcast's targets.
-local MAX_NEW_CONTACTS_PER_WHO_CYCLE = 5
-local WHO_PING_PREFIX = 'GWGR_PING#'
-local pendingWhoTag, pendingWhoGuildName = nil, nil
-local whoQueryOrder, whoQueryIndex = {}, 0
--- A live /who query's round trip is normally near-instant; 12s is well
--- past that while staying comfortably under the 30s cycle interval - see
--- the self-heal timer in DoWhoQuery.
-local WHO_QUERY_TIMEOUT = 12
-
--- Healthy ping round trip is just two whisper addon-messages (not
--- protected/hardware-gated, unlike SendWho/SendChatMessage elsewhere in
--- this file) - the reply fires synchronously off the receiver's
--- CHAT_MSG_ADDON handler, so real-world latency is normal network/server
--- delay only, at most a few seconds between two online, actively-playing
--- clients. 6s gives ~2x headroom over that before assuming no reply is
--- coming, while staying well under the 30s /who cycle interval - a name
--- that needs the fallback still gets it within the same discovery cycle
--- that found them, not delayed to a later one.
-local WHO_PING_TIMEOUT = 6
--- pendingPings[name] = the GetTime() this name's ping expires at. Purely
--- in-memory (not a SavedVariable) - losing it on reload just means that
--- name might get pinged again next cycle, harmless. Prevents piling up
--- redundant pings/fallbacks for a name that keeps reappearing in /who
--- results while its first ping is still outstanding.
-local pendingPings = {}
-
--- Must embed our OWN tag, not the target's - the receive side validates
--- the claimed SENDER's tag against ITS OWN known confederation tags
--- (mirrors how a normal tag#payload message self-reports the sender's own
--- tag). Getting this backwards makes the ping silently fail with no error
--- on either side - the single easiest mistake to make here.
-local function SendWhoPing(name)
-    if not ns.ownTag then return end
-    ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX, WHO_PING_PREFIX .. ns.ownTag, 'WHISPER', name, ADDON_MSG_PREFIX .. ':' .. name,
-        function(_, didSend, sendResult)
-            if ns.debugAddonMsg then
-                print(('|cff33ff99GreenWallGuildRoster|r: TX ping to %s (new contact via /who) didSend=%s sendResult=%s'):format(name, tostring(didSend), tostring(sendResult)))
-            end
-        end)
-end
-
--- tag here is the PEER guild's tag (whichever co-guild OnWhoListUpdate was
--- querying when this name turned up) - distinct from ns.ownTag used
--- inside SendWhoPing above, kept as separate parameters deliberately so
--- they're never confused for each other.
-local function SendWhoPingFallback(name, tag)
-    pendingPings[name] = nil
-    local store = GreenWallGuildRosterDB.peers[tag]
-    if store and store[name] then
-        -- Reply already landed (the real "pong" is just a normal payload -
-        -- there's no separate pong message type) - nothing to do.
-        if ns.debugAddonMsg then
-            print(('|cff33ff99GreenWallGuildRoster|r: %s answered the /who ping, no fallback needed.'):format(name))
-        end
-        return
-    end
-    if ns.debugAddonMsg then
-        print(('|cff33ff99GreenWallGuildRoster|r: %s never answered the /who ping, falling back to a direct send.'):format(name))
-    end
-    SendFullRosterTo(name)
-end
-
--- C_FriendList.SendWho is ALSO a protected function requiring a direct
--- hardware event (mouse click / key press) - same restriction as
--- SendChatMessage elsewhere in this file, confirmed the hard way
--- (ADDON_ACTION_BLOCKED calling it straight from a C_Timer ticker). The
--- comments in DeathNotificationLib's own /who code actually already said
--- as much ("ensuring compliance with WoW's hardware-event requirement")
--- - missed applying that the first time round. Fix, same technique they
--- use: the ticker below only marks a query as due; the actual SendWho
--- call happens from a shared WorldFrame OnMouseDown / OnKeyDown hook,
--- which is about as close to "automatic" as this restriction allows,
--- since normal play means a hardware event within moments regardless.
-local whoQueryDue = false
-
-local function DoWhoQuery()
-    if pendingWhoTag then return end -- previous query never got a WHO_LIST_UPDATE; don't pile up
-    whoQueryOrder = {}
-    for tag in pairs(ns.peerNames or {}) do
-        if tag ~= ns.ownTag then
-            whoQueryOrder[#whoQueryOrder + 1] = tag
-        end
-    end
-    if #whoQueryOrder == 0 then return end
-
-    whoQueryIndex = (whoQueryIndex % #whoQueryOrder) + 1
-    local tag = whoQueryOrder[whoQueryIndex]
-    local guildName = ns.peerNames[tag]
-    if not guildName then return end
-
-    pendingWhoTag, pendingWhoGuildName = tag, guildName
-    -- Keeps the default Who panel from popping open/updating in response
-    -- to our background scan - same suppression DeathNotificationLib uses.
-    if FriendsFrame then
-        FriendsFrame:UnregisterEvent('WHO_LIST_UPDATE')
-    end
-    C_FriendList.SetWhoToUi(true)
-    C_FriendList.SendWho(('g-"%s"'):format(guildName))
-
-    -- Self-heals a query that never gets a WHO_LIST_UPDATE reply (server
-    -- rate-limit, connection hiccup) - without this, pendingWhoTag stays
-    -- set forever and the guard at the top of this function silently
-    -- no-ops every future /who discovery cycle for the rest of the
-    -- session, until a /reload.
-    C_Timer.After(WHO_QUERY_TIMEOUT, function()
-        if pendingWhoTag == tag then
-            if ns.debugAddonMsg then
-                print(('|cff33ff99GreenWallGuildRoster|r: /who query for tag %s never got a reply, clearing to avoid a stuck discovery loop.'):format(tag))
-            end
-            pendingWhoTag, pendingWhoGuildName = nil, nil
-        end
-    end)
-end
-
--- Single upstream gate for the whole /who discovery chain - off by
--- default. If this never sets whoQueryDue, DoWhoQuery never fires,
--- pendingWhoTag never gets set, and OnWhoListUpdate's own
--- "if not pendingWhoTag then return end" guard means everything downstream
--- (SendWhoPing, SendWhoPingFallback, whoSeen collection) stops too, with no
--- changes needed there. Checked live on every 30s tick rather than once, so
--- this can't get stuck on a stale pre-ADDON_LOADED default.
-local function RequestWhoQuery()
-    if not (GreenWallGuildRosterDB and GreenWallGuildRosterDB.whoDiscoveryEnabled) then return end
-    whoQueryDue = true
-end
-
--- Single shared hardware-event hook (same pattern as DeathNotificationLib's
--- registerInputDrain), draining whatever's due whenever the player next
--- clicks or presses a key.
-WorldFrame:HookScript('OnMouseDown', function()
-    if whoQueryDue then
-        whoQueryDue = false
-        DoWhoQuery()
-    end
-end)
-local whoInputFrame = CreateFrame('Frame', nil, UIParent)
-whoInputFrame:SetPropagateKeyboardInput(true)
-whoInputFrame:SetScript('OnKeyDown', function()
-    if whoQueryDue then
-        whoQueryDue = false
-        DoWhoQuery()
-    end
-end)
-
-local function OnWhoListUpdate()
-    if FriendsFrame then
-        FriendsFrame:RegisterEvent('WHO_LIST_UPDATE')
-    end
-    if not pendingWhoTag then return end
-    local tag, guildName = pendingWhoTag, pendingWhoGuildName
-    pendingWhoTag, pendingWhoGuildName = nil, nil
-
-    local ownName = UnitName('player')
-    local store = GreenWallGuildRosterDB.peers[tag]
-    local now = GetTime()
-    local newContacts = {}
-    -- Recorded regardless of new-contact status - the roster window's
-    -- "seen via /who but addon not confirmed" rows read from this, letting
-    -- it show even non-addon guild members using whatever bare data /who
-    -- itself provides (no badge/alt-link/note - /who doesn't have those).
-    GreenWallGuildRosterDB.whoSeen[tag] = GreenWallGuildRosterDB.whoSeen[tag] or {}
-    local whoSeenStore = GreenWallGuildRosterDB.whoSeen[tag]
-    local num = C_FriendList.GetNumWhoResults() or 0
-    for i = 1, num do
-        local info = C_FriendList.GetWhoInfo(i)
-        if info and info.guild == guildName and info.fullName then
-            local shortName = info.fullName:match('^[^-]+') or info.fullName
-            if shortName ~= ownName then
-                -- Wall-clock time() here (not the GetTime() used for the
-                -- ping-expiry math above/below) - matches the same
-                -- staleness convention RosterFrame.lua already uses for
-                -- confirmed peer entries.
-                whoSeenStore[shortName] = {
-                    level = info.level, classFile = info.filename, zone = info.area,
-                    guild = guildName, ts = time(),
-                }
-            end
-            -- Skip anyone already known, and anyone whose ping from an
-            -- earlier /who cycle hasn't expired yet - an expired-but-still-
-            -- pending entry (the fallback timer somehow never fired) is
-            -- treated as resolved and becomes eligible again, self-healing
-            -- without needing manual cleanup.
-            local pingExpiry = pendingPings[shortName]
-            if shortName ~= ownName and not (store and store[shortName])
-                and not (pingExpiry and pingExpiry > now) then
-                newContacts[#newContacts + 1] = shortName
-            end
-        end
-    end
-
-    for i = 1, math.min(MAX_NEW_CONTACTS_PER_WHO_CYCLE, #newContacts) do
-        local name = newContacts[i]
-        pendingPings[name] = now + WHO_PING_TIMEOUT
-        SendWhoPing(name)
-        C_Timer.After(WHO_PING_TIMEOUT, function()
-            SendWhoPingFallback(name, tag)
-        end)
-    end
-end
-
 local function OnAddonMessage(prefix, message, channel, sender)
     -- Only our own prefix, not every addon message on the client (that
     -- was drowning the debug log in unrelated traffic from GuildMap,
@@ -871,15 +617,32 @@ local function OnAddonMessage(prefix, message, channel, sender)
     end
     if channel ~= 'WHISPER' then return end
 
-    -- Future-facing: a peer on a version whose own /who discovery pings
-    -- first rather than sending directly (see the comment above
-    -- OnWhoListUpdate) needs this side to recognize and answer that ping -
-    -- otherwise we'd just be invisible to their discovery the same way an
-    -- old version is invisible to ours right now.
-    local pingTag = message:match('^' .. WHO_PING_PREFIX .. '(%a+)$')
-    if pingTag then
-        if ns.peerNames[pingTag] then
-            SendFullRosterTo(sender)
+    local helloTag, helloNonce = message:match('^' .. HELLO_PREFIX .. '(%a+)#(%d+)$')
+    if helloTag then
+        -- A peer may receive many HELLOs when it joins.  It acknowledges
+        -- only one client per co-guild during the cooldown, so the join
+        -- produces one roster exchange rather than every visible client
+        -- sending the same full roster.
+        if helloTag ~= ns.ownTag and ns.peerNames[helloTag] then
+            local now = GetTime()
+            if not acceptedHello[helloTag] or acceptedHello[helloTag] <= now then
+                acceptedHello[helloTag] = now + SYNC_COOLDOWN_SECONDS
+                SendControlMessage(sender, ACK_PREFIX .. ns.ownTag .. '#' .. helloNonce, 'TX handshake acknowledgement to')
+            end
+        end
+        return
+    end
+
+    local ackTag, ackNonce = message:match('^' .. ACK_PREFIX .. '(%a+)#(%d+)$')
+    if ackTag then
+        local pending = pendingHello[ClientKey(sender)]
+        if pending and pending.nonce == ackNonce and ackTag ~= ns.ownTag and ns.peerNames[ackTag] then
+            pendingHello[ClientKey(sender)] = nil
+            -- Keep the expensive roster transfer outside the join event and
+            -- behind a successful acknowledgement.
+            C_Timer.After(math.random(3, 8), function()
+                SendFullRosterTo(sender)
+            end)
         end
         return
     end
@@ -921,7 +684,8 @@ frame:RegisterEvent('ADDON_LOADED')
 frame:RegisterEvent('PLAYER_ENTERING_WORLD')
 frame:RegisterEvent('GUILD_ROSTER_UPDATE')
 frame:RegisterEvent('CHAT_MSG_ADDON')
-frame:RegisterEvent('WHO_LIST_UPDATE')
+frame:RegisterEvent('CHAT_MSG_CHANNEL_JOIN')
+frame:RegisterEvent('CHAT_MSG_CHANNEL_LEAVE')
 
 frame:SetScript('OnEvent', function(_, event, ...)
     if event == 'ADDON_LOADED' then
@@ -937,13 +701,14 @@ frame:SetScript('OnEvent', function(_, event, ...)
         GreenWallGuildRosterDB = GreenWallGuildRosterDB or {}
         GreenWallGuildRosterDB.peers = GreenWallGuildRosterDB.peers or {}
         GreenWallGuildRosterDB.mainLinks = GreenWallGuildRosterDB.mainLinks or {}
-        GreenWallGuildRosterDB.whoSeen = GreenWallGuildRosterDB.whoSeen or {}
+        -- /who discovery was removed: discard its obsolete cached rows on
+        -- the first load after updating, so they cannot reappear in a later
+        -- version or inflate the saved-variable file indefinitely.
+        GreenWallGuildRosterDB.whoSeen = nil
         if GreenWallGuildRosterDB.pratIntegration == nil then
             GreenWallGuildRosterDB.pratIntegration = false
         end
-        if GreenWallGuildRosterDB.whoDiscoveryEnabled == nil then
-            GreenWallGuildRosterDB.whoDiscoveryEnabled = false
-        end
+        GreenWallGuildRosterDB.whoDiscoveryEnabled = nil
         if ns.ApplyMinimapButtonVisibility then ns.ApplyMinimapButtonVisibility() end
         if ns.ApplyMinimapButtonPosition then ns.ApplyMinimapButtonPosition() end
     elseif event == 'PLAYER_ENTERING_WORLD' then
@@ -955,7 +720,6 @@ frame:SetScript('OnEvent', function(_, event, ...)
         end
         C_Timer.After(3, function()
             UpdateConfig()
-            AutoBroadcast()
             -- Backfill Prat's name cache from peer data already known from
             -- a previous session, so chat lines look right immediately at
             -- login instead of only after the next sync updates someone.
@@ -975,14 +739,14 @@ frame:SetScript('OnEvent', function(_, event, ...)
     elseif event == 'GUILD_ROSTER_UPDATE' then
         EnsureAPIHandler()
         UpdateConfig()
-        if GetTime() - lastAutoBroadcast > 30 then
-            AutoBroadcast()
-        end
         RequestRefresh()
     elseif event == 'CHAT_MSG_ADDON' then
         OnAddonMessage(...)
-    elseif event == 'WHO_LIST_UPDATE' then
-        OnWhoListUpdate()
+    elseif event == 'CHAT_MSG_CHANNEL_JOIN' or event == 'CHAT_MSG_CHANNEL_LEAVE' then
+        local _, player, _, _, _, _, _, channelNumber = ...
+        if IsGuildChannel(channelNumber) then
+            HandlePresence(player, event == 'CHAT_MSG_CHANNEL_JOIN')
+        end
     end
 end)
 
@@ -995,17 +759,6 @@ end)
 -- instead of spread out. C_Timer.NewTicker can't do a variable interval,
 -- so this reschedules itself with a fresh random delay each time rather
 -- than a single fixed-period ticker.
-local function ScheduleAutoBroadcast()
-    C_Timer.After(math.random(90, 150), function()
-        AutoBroadcast()
-        ScheduleAutoBroadcast()
-    end)
-end
-ScheduleAutoBroadcast()
--- Separate, slower cadence for /who-based discovery - rotates one co-guild
--- per tick rather than querying all of them at once.
-C_Timer.NewTicker(30, RequestWhoQuery)
-
 ns.Broadcast = Broadcast
 
 SLASH_GWGROSTER1 = '/gwgr'
@@ -1018,16 +771,12 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
         print('|cff33ff99GreenWallGuildRoster|r ' .. ns.L['GreenWallGuildRoster commands:'])
         print('  |cffffd200/gwgr|r - ' .. ns.L['/gwgr - open/close the roster window'])
         print('  |cffffd200/gwgr broadcast|r - ' .. ns.L["/gwgr broadcast - send a full roster snapshot over GreenWall's confederation channel (GreenWallAPI)"])
-        print('  |cffffd200/gwgr auto|r - ' .. ns.L['/gwgr auto - force an immediate full sync over the whisper channel (for testing)'])
         print('  |cffffd200/gwgr setmain <name>|r - ' .. ns.L["/gwgr setmain <name> - mark the character you're on as an alt of <name>; no name clears it"])
         print('  |cffffd200/gwgr status|r - ' .. ns.L['/gwgr status - show GreenWallAPI availability, own tag, and known confederation tags'])
         print('  |cffffd200/gwgr debug|r - ' .. ns.L['/gwgr debug - toggle addon-message RX/TX logging'])
         print('  |cffffd200/gwgr minimap|r - ' .. ns.L['/gwgr minimap - toggle the minimap button (also in Options > AddOns > GreenWall GuildRoster)'])
         print('  |cffffd200/gwgr exportzones|r - ' .. ns.L['/gwgr exportzones - export all known zone names for your client language, for building translation tables'])
         print('  |cffffd200/gwgr help|r - ' .. ns.L['/gwgr help - this list'])
-    elseif cmd == 'auto' then
-        print('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Force full AutoBroadcast (addon message, all online members)...'])
-        AutoBroadcast(true)
     elseif cmd == 'broadcast' then
         Broadcast()
         print('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Broadcast sent.'])
