@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6
+
+**Sync**
+- Whisper-based sync (full roster replies, the periodic broadcast, and `/who` pings) now rides ChatThrottleLib instead of calling the raw API directly, the same library most other installed addons already use for this. Paces outgoing messages to avoid hitting the client's own throttle, and stops sending further chunks to a target the moment one fails instead of only after the fact.
+
 ## 1.0.5
 
 **Roster window**

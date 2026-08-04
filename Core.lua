@@ -295,6 +295,35 @@ local function RequestRefresh()
     end)
 end
 
+-- Sends a chunked roster payload to one target via ChatThrottleLib,
+-- chaining one chunk at a time instead of a flat loop - the next chunk is
+-- only ever enqueued from the previous one's callback, once it's
+-- confirmed Enum.SendAddonMessageResult.Success (0). A target that fails
+-- once fails identically for every remaining chunk too (observed live: a
+-- wall of repeated "no player named X" system errors, one per chunk, for
+-- a target that can't actually be reached) - chaining like this means we
+-- never even enqueue the next chunk after a failure, rather than firing
+-- them all up front and hoping to cancel the rest (CTL has no public
+-- "cancel this queue" API, so that wouldn't actually stop anything
+-- already queued).
+local function SendChunkedTo(target, chunks, debugLabel)
+    debugLabel = debugLabel or ''
+    local queueName = ADDON_MSG_PREFIX .. ':' .. target
+    local function sendChunk(i)
+        if i > #chunks then return end
+        ChatThrottleLib:SendAddonMessage('BULK', ADDON_MSG_PREFIX, ns.ownTag .. '#' .. chunks[i], 'WHISPER', target, queueName,
+            function(_, didSend, sendResult)
+                if ns.debugAddonMsg then
+                    print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg%s to %s chunk %d/%d didSend=%s sendResult=%s'):format(debugLabel, target, i, #chunks, tostring(didSend), tostring(sendResult)))
+                end
+                if sendResult == 0 then
+                    sendChunk(i + 1)
+                end
+            end)
+    end
+    sendChunk(1)
+end
+
 -- Sends a full roster snapshot to one specific whisper target - the same
 -- payload/chunking AutoBroadcast uses, just aimed at a single name instead
 -- of a picked set. Shared by the ping-reply and the first-contact reply
@@ -304,19 +333,9 @@ local function SendFullRosterTo(target)
     local rows = CollectOwnRoster(true)
     if #rows == 0 then return end
     local chunks = ChunkRows(rows, 200)
-    for i, payload in ipairs(chunks) do
-        local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, ns.ownTag .. '#' .. payload, 'WHISPER', target)
-        if ns.debugAddonMsg then
-            print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg (reply) to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
-        end
-        -- Enum.SendAddonMessageResult.Success == 0 - anything else means
-        -- this target isn't actually receiving these (observed live: a
-        -- target that fails once fails identically for every remaining
-        -- chunk too), so stop instead of repeating the same visible
-        -- "no player named X" system error once per remaining chunk.
-        if ok ~= 0 then break end
-    end
+    SendChunkedTo(target, chunks, ' (reply)')
 end
+
 
 -- Shared by both transports: merges a received chunk into the peer cache.
 -- Only accepted from a tag that's actually one of GreenWall's declared
@@ -618,18 +637,7 @@ local function AutoBroadcast(forceFull)
     end
 
     for _, target in ipairs(targets) do
-        for i, payload in ipairs(chunks) do
-            local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, ns.ownTag .. '#' .. payload, 'WHISPER', target)
-            if ns.debugAddonMsg then
-                print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg to %s chunk %d/%d ok=%s'):format(target, i, #chunks, tostring(ok)))
-            end
-            -- Enum.SendAddonMessageResult.Success == 0 - a target that
-            -- fails once fails identically for every remaining chunk too
-            -- (observed live: repeated "no player named X" system errors,
-            -- one per chunk, for a target that can't actually be reached),
-            -- so move on to the next target instead of spamming the rest.
-            if ok ~= 0 then break end
-        end
+        SendChunkedTo(target, chunks)
     end
     lastAutoBroadcast = GetTime()
 end
@@ -684,10 +692,12 @@ local pendingPings = {}
 -- on either side - the single easiest mistake to make here.
 local function SendWhoPing(name)
     if not ns.ownTag then return end
-    local ok = C_ChatInfo.SendAddonMessage(ADDON_MSG_PREFIX, WHO_PING_PREFIX .. ns.ownTag, 'WHISPER', name)
-    if ns.debugAddonMsg then
-        print(('|cff33ff99GreenWallGuildRoster|r: TX ping to %s (new contact via /who) ok=%s'):format(name, tostring(ok)))
-    end
+    ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX, WHO_PING_PREFIX .. ns.ownTag, 'WHISPER', name, ADDON_MSG_PREFIX .. ':' .. name,
+        function(_, didSend, sendResult)
+            if ns.debugAddonMsg then
+                print(('|cff33ff99GreenWallGuildRoster|r: TX ping to %s (new contact via /who) didSend=%s sendResult=%s'):format(name, tostring(didSend), tostring(sendResult)))
+            end
+        end)
 end
 
 -- tag here is the PEER guild's tag (whichever co-guild OnWhoListUpdate was

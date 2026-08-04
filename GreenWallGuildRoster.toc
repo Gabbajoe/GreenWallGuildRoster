@@ -2,13 +2,14 @@
 ## Title: GreenWall GuildRoster
 ## Notes: Combined roster window for GreenWall-bridged co-guilds.
 ## Author: Gabbajoe
-## Version: 1.0.5
+## Version: 1.0.6
 ## SavedVariablesPerCharacter: GreenWallGuildRosterDB
 ## Dependencies: GreenWall
 ## IconTexture: Interface\AddOns\GreenWallGuildRoster\icon.png
 ## X-Curse-Project-ID: 1629646
 ## X-Wago-ID: rNkyamKa
 
+Libs\ChatThrottleLib.lua
 Locale.lua
 ZoneData.lua
 Logic.lua
