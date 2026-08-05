@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.9
+
+**Roster accuracy**
+- Fixed characters remaining cached under their former co-guild after switching guilds. A confirmed roster entry now removes the same character from every other cached co-guild immediately instead of waiting for the old guild's missing-member scans.
+- Added complete own-character guild-change handling. Joining, leaving, or switching guilds now invalidates the previous guild tag and resets roster deltas, missing-member tracking, channel presence, handshake queues, and synchronization cooldowns before rebuilding state for the new guild.
+- Added a delayed configuration retry after `PLAYER_GUILD_UPDATE`, covering the short period in which Blizzard reports the new guild before its guild-info text and roster have finished loading.
+
 ## 1.0.8
 
 **Sync**

@@ -9,6 +9,8 @@ ns.ownGuild = nil
 ns.lastRosterUpdate = 0
 ns.debugAddonMsg = false
 
+local ResetGuildSessionState
+
 C_ChatInfo.RegisterAddonMessagePrefix(ADDON_MSG_PREFIX)
 
 -- Reads GreenWall's own GWp directives from the guild info page purely for
@@ -39,17 +41,44 @@ local function GreenWallAPIAvailable()
 end
 
 local function UpdateConfig()
-    local cfg = ParseConfig()
-    if not cfg then return false end
     local guildName = GetGuildInfo('player')
-    if not guildName then return false end
+    local oldTag, oldGuild = ns.ownTag, ns.ownGuild
+
+    if not guildName then
+        ns.peerNames = {}
+        ns.ownTag = nil
+        ns.ownGuild = nil
+        if (oldTag or oldGuild) and ResetGuildSessionState then ResetGuildSessionState() end
+        return false
+    end
+
+    local cfg = ParseConfig()
+    if not cfg then
+        -- Guild info text can be briefly unavailable while the roster loads. Preserve
+        -- state only while Blizzard still reports the same guild; on a confirmed guild
+        -- change, invalidate the old tag immediately so nothing is sent under it.
+        if not oldGuild or oldGuild:lower() ~= guildName:lower() then
+            ns.peerNames = {}
+            ns.ownTag = nil
+            ns.ownGuild = guildName
+            if ResetGuildSessionState then ResetGuildSessionState() end
+        end
+        return false
+    end
 
     ns.peerNames = cfg.peers
+    local nextTag
     for tag, gname in pairs(cfg.peers) do
         if gname:lower() == guildName:lower() then
-            ns.ownTag = tag
-            ns.ownGuild = gname
+            nextTag = tag
+            break
         end
+    end
+    ns.ownTag = nextTag
+    ns.ownGuild = guildName
+
+    if oldTag ~= ns.ownTag or not oldGuild or oldGuild:lower() ~= guildName:lower() then
+        if ResetGuildSessionState then ResetGuildSessionState() end
     end
 
     -- One-time cleanup: a self-tagged entry could have gotten stored under
@@ -343,6 +372,19 @@ local handshakeQueue = {}
 local handshakeQueued = {}
 local acceptedHello = {}
 
+ResetGuildSessionState = function()
+    wipe(lastOnlineSet)
+    lastFullSyncTime = 0
+    wipe(lastKnownMembers)
+    wipe(missingStreak)
+    wipe(presence)
+    wipe(handshakeState)
+    wipe(handshakeQueue)
+    wipe(handshakeQueued)
+    wipe(acceptedHello)
+    ns.lastRosterUpdate = 0
+end
+
 local function ClientKey(name)
     -- CHAT_MSG_CHANNEL_* and CHAT_MSG_ADDON do not consistently include a
     -- realm suffix on every Classic client. The bridge channel is realm
@@ -600,6 +642,20 @@ local function MergePeerPayload(tag, payload, sender, source)
                     badge = badge, source = source,
                 }
                 FeedPratNameCache(name, class, levelNum)
+                -- A real player can only be in one guild at a time - if
+                -- this name is a confirmed member of tag's guild, any
+                -- entry still cached under a DIFFERENT co-guild tag is a
+                -- stale leftover from before they switched guilds (e.g.
+                -- Milchbar -> Saftladen), which would otherwise sit there
+                -- forever unless someone still active in the OLD guild
+                -- happens to notice the departure across
+                -- MISSING_STREAK_THRESHOLD consecutive scans. Purge it
+                -- eagerly instead of waiting on that.
+                for otherTag, otherStore in pairs(GreenWallGuildRosterDB.peers) do
+                    if otherTag ~= tag and otherStore[name] then
+                        otherStore[name] = nil
+                    end
+                end
             end
         end
     end
@@ -749,6 +805,7 @@ local frame = CreateFrame('Frame')
 frame:RegisterEvent('ADDON_LOADED')
 frame:RegisterEvent('PLAYER_ENTERING_WORLD')
 frame:RegisterEvent('GUILD_ROSTER_UPDATE')
+frame:RegisterEvent('PLAYER_GUILD_UPDATE')
 frame:RegisterEvent('CHAT_MSG_ADDON')
 frame:RegisterEvent('CHAT_MSG_CHANNEL_JOIN')
 frame:RegisterEvent('CHAT_MSG_CHANNEL_LEAVE')
@@ -811,6 +868,16 @@ frame:SetScript('OnEvent', function(_, event, ...)
         UpdateConfig()
         C_Timer.After(2, RefreshChannelPresence)
         RequestRefresh()
+    elseif event == 'PLAYER_GUILD_UPDATE' then
+        -- Fires for joining, leaving and switching guilds. Invalidate the old identity
+        -- immediately, then retry after Blizzard has populated the new guild info text.
+        UpdateConfig()
+        C_GuildInfo.GuildRoster()
+        C_Timer.After(2, function()
+            UpdateConfig()
+            RefreshChannelPresence()
+            RequestRefresh()
+        end)
     elseif event == 'CHAT_MSG_ADDON' then
         OnAddonMessage(...)
     elseif event == 'CHAT_MSG_CHANNEL_JOIN' or event == 'CHAT_MSG_CHANNEL_LEAVE' then
