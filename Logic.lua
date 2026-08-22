@@ -39,3 +39,27 @@ local function RankBadge(rankIndex, getFlags)
     return '0'
 end
 ns.RankBadge = RankBadge
+
+local function ClientKey(name)
+    return name and (name:match('^[^-]+') or name):lower() or ''
+end
+ns.ClientKey = ClientKey
+
+local function IsHandshakeCandidate(player, ownName, localGuildMembers)
+    local key = ClientKey(player)
+    if key == '' or key == ClientKey(ownName) then return false end
+    return not (localGuildMembers and localGuildMembers[key])
+end
+ns.IsHandshakeCandidate = IsHandshakeCandidate
+
+local function MarkRecent(cache, key, now, ttl)
+    if type(cache) ~= 'table' or not key or key == '' then return false end
+    now, ttl = tonumber(now) or 0, tonumber(ttl) or 0
+    for cachedKey, expiresAt in pairs(cache) do
+        if expiresAt <= now then cache[cachedKey] = nil end
+    end
+    local duplicate = cache[key] and cache[key] > now or false
+    cache[key] = now + ttl
+    return duplicate
+end
+ns.MarkRecent = MarkRecent

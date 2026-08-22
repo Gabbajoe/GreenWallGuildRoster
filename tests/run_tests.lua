@@ -52,6 +52,22 @@ eq(ns.RankBadge(2, flagsWithIndex3(true)), '1', 'flag[3]=true is a native office
 eq(ns.RankBadge(2, flagsWithIndex3(false)), '0', 'flag[3]=false is no crown, even for a non-base rank')
 eq(ns.RankBadge(5, function() error('rank not found') end), '0', 'a failed flag lookup is treated as no crown, not an error')
 
+local localMembers = { gabbablink = true, palaberd = true }
+check(not ns.IsHandshakeCandidate('Gabbablink-Soulseeker', 'Gabbablink', localMembers),
+    'the local player is never a handshake target')
+check(not ns.IsHandshakeCandidate('Palaberd-Soulseeker', 'Gabbablink', localMembers),
+    'same-guild channel members are excluded from whisper discovery')
+check(ns.IsHandshakeCandidate('Klimaanlagee-Soulseeker', 'Gabbablink', localMembers),
+    'cross-guild channel members remain handshake candidates')
+
+local recent = {}
+check(not ns.MarkRecent(recent, 'S#payload', 100, 30), 'first payload is not a duplicate')
+check(ns.MarkRecent(recent, 'S#payload', 120, 30), 'same payload inside TTL is a duplicate')
+check(not ns.MarkRecent(recent, 'S#payload', 151, 30), 'payload after refreshed TTL is accepted again')
+recent.old = 1
+ns.MarkRecent(recent, 'S#other', 200, 30)
+check(recent.old == nil, 'expired payload keys are pruned instead of growing forever')
+
 -- NewPaletteAssigner ------------------------------------------------------
 local nextColor = ns.NewPaletteAssigner()
 local first = nextColor('SaftladenTag')

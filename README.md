@@ -46,7 +46,7 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 There are two transports, because Classic's client restricts what's available for each:
 
 1. **Manual channel broadcast** (`Broadcast`): each client reads its own guild's full roster (including offline members, normally only visible within your own guild) and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
-2. **Presence-confirmed whisper sync**: GuildRoster reads the members currently present in GreenWall's normal guild bridge after login and observes later joins/leaves. It sends a small HELLO through a paced queue; only a client that answers is eligible for a full roster exchange. Each client releases at most one HELLO every 30 seconds and retries only clients that are still present after a cooldown. One confirmed exchange is fanned out to other GuildRoster users in that sender's own guild through WoW's normal guild addon-message channel, so a channel join cannot create a full-sync burst. `/who` is not used at all: it neither discovers targets nor creates roster rows.
+2. **Presence-confirmed whisper sync**: GuildRoster reads the members currently present in GreenWall's normal guild bridge after login and observes later joins/leaves. Own-guild members are excluded because their roster is already available locally. It sends a small HELLO through a paced queue; only a client that answers is eligible for a full roster exchange. Each client releases at most one HELLO every 30 seconds and retries only clients that are still present after a cooldown. One confirmed exchange is fanned out at `BULK` priority to other GuildRoster users in that sender's own guild. That fan-out establishes a short shared freshness lease, so other local clients suppress redundant acknowledgements for the same peer guild. `/who` is not used at all: it neither discovers targets nor creates roster rows.
 
 So: click Broadcast once to introduce your guild to the other co-guild(s). After that, clients that appear on the GreenWall bridge can exchange a roster only after confirming that GuildRoster is present and reachable. The window shows how long ago your last manual broadcast was as a useful freshness indicator.
 
@@ -55,7 +55,7 @@ So: click Broadcast once to introduce your guild to the other co-guild(s). After
 ## Known limitations
 
 - Roster data for the other co-guild(s) is only as fresh as the last time someone there broadcasted.
-- Very large guilds mean a lot of chunked messages per broadcast; there's no batching/throttling beyond keeping each message under the chat length limit.
+- A manual channel broadcast is still a synchronous, user-triggered operation. It is capped to 200 online rows and conservatively chunked; automatic whisper and local-guild synchronization use ChatThrottleLib pacing.
 - Built and tested against Classic Era (Interface 11509).
 
 ## License

@@ -338,7 +338,10 @@ local function SendChunkedTo(target, chunks, debugLabel)
                     print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg%s to %s chunk %d/%d didSend=%s sendResult=%s'):format(debugLabel, target, i, #chunks, tostring(didSend), tostring(sendResult)))
                 end
                 if sendResult == 0 then
+                    ns.syncStats.chunksDelivered = ns.syncStats.chunksDelivered + 1
                     sendChunk(i + 1)
+                else
+                    ns.syncStats.sendFailed = ns.syncStats.sendFailed + 1
                 end
             end)
     end
@@ -353,6 +356,7 @@ local function SendFullRosterTo(target)
     local rows = CollectOwnRoster(true)
     if #rows == 0 then return end
     local chunks = ChunkRows(rows, 200)
+    ns.syncStats.fullTX = ns.syncStats.fullTX + 1
     SendChunkedTo(target, chunks, ' (reply)')
 end
 
@@ -366,11 +370,21 @@ local LOCAL_GUILD_PREFIX = 'GWGR_LOCAL#'
 local HELLO_RETRY_SECONDS = 900
 local SYNC_COOLDOWN_SECONDS = 600
 local HANDSHAKE_DISPATCH_INTERVAL = 30
+local PAYLOAD_DEDUP_SECONDS = 30
 local presence = {}
+local localGuildMembers = {}
 local handshakeState = {}
 local handshakeQueue = {}
 local handshakeQueued = {}
 local acceptedHello = {}
+local peerFreshUntil = {}
+local recentPayloads = {}
+
+ns.syncStats = {
+    helloTX = 0, ackTX = 0, helloSuppressed = 0,
+    fullTX = 0, chunksDelivered = 0, sendFailed = 0,
+    localFanout = 0, duplicateFanoutSuppressed = 0,
+}
 
 ResetGuildSessionState = function()
     wipe(lastOnlineSet)
@@ -378,24 +392,36 @@ ResetGuildSessionState = function()
     wipe(lastKnownMembers)
     wipe(missingStreak)
     wipe(presence)
+    wipe(localGuildMembers)
     wipe(handshakeState)
     wipe(handshakeQueue)
     wipe(handshakeQueued)
     wipe(acceptedHello)
+    wipe(peerFreshUntil)
+    wipe(recentPayloads)
     ns.lastRosterUpdate = 0
 end
 
-local function ClientKey(name)
-    -- CHAT_MSG_CHANNEL_* and CHAT_MSG_ADDON do not consistently include a
-    -- realm suffix on every Classic client. The bridge channel is realm
-    -- scoped, so the short character name is the stable key for matching a
-    -- JOIN with its later ADDON acknowledgement.
-    return name and (name:match('^[^-]+') or name):lower() or ''
+local ClientKey = ns.ClientKey
+
+local function RefreshLocalGuildMembers()
+    wipe(localGuildMembers)
+    local total = GetNumGuildMembers() or 0
+    for index = 1, total do
+        local name = GetGuildRosterInfo(index)
+        local key = ClientKey(name)
+        if key ~= '' then localGuildMembers[key] = true end
+    end
+    local ownKey = ClientKey(UnitName('player'))
+    if ownKey ~= '' then localGuildMembers[ownKey] = true end
 end
 
 local function SendControlMessage(target, message, label)
     ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX, message, 'WHISPER', target,
         ADDON_MSG_PREFIX .. ':control:' .. target, function(_, didSend, sendResult)
+            if not didSend or sendResult ~= 0 then
+                ns.syncStats.sendFailed = ns.syncStats.sendFailed + 1
+            end
             if ns.debugAddonMsg then
                 print(('|cff33ff99GreenWallGuildRoster|r: %s %s didSend=%s sendResult=%s'):format(
                     label, target, tostring(didSend), tostring(sendResult)))
@@ -408,18 +434,17 @@ end
 -- guild addon channel instead of making each local client repeat the same
 -- full whisper sync independently.
 local function SendLocalGuildPayload(tag, payload)
-    ChatThrottleLib:SendAddonMessage('NORMAL', ADDON_MSG_PREFIX,
+    ns.syncStats.localFanout = ns.syncStats.localFanout + 1
+    ChatThrottleLib:SendAddonMessage('BULK', ADDON_MSG_PREFIX,
         LOCAL_GUILD_PREFIX .. tag .. '#' .. payload, 'GUILD', nil,
         ADDON_MSG_PREFIX .. ':guild:' .. tag)
 end
 
 local function QueueHandshake(player)
     if not ns.ownTag or not player or player == '' then return end
-    local ownName = UnitName('player')
-    if player:match('^[^-]+') == ownName then return end
-
     local key, now = ClientKey(player), GetTime()
     presence[key] = player
+    if not ns.IsHandshakeCandidate(player, UnitName('player'), localGuildMembers) then return end
     local state = handshakeState[key]
     if (state and state.retryAfter > now) or handshakeQueued[key] then return end
 
@@ -438,9 +463,13 @@ local function ServiceHandshakeQueue()
         handshakeQueued[key] = nil
         local player = presence[key]
         local state = handshakeState[key]
-        if player and (not state or state.retryAfter <= now) then
+        if player
+            and ns.IsHandshakeCandidate(player, UnitName('player'), localGuildMembers)
+            and (not state or state.retryAfter <= now)
+        then
             local nonce = tostring(math.random(100000, 999999))
             handshakeState[key] = { nonce = nonce, retryAfter = now + HELLO_RETRY_SECONDS }
+            ns.syncStats.helloTX = ns.syncStats.helloTX + 1
             SendControlMessage(player, HELLO_PREFIX .. ns.ownTag .. '#' .. nonce, 'TX handshake to')
             return
         end
@@ -462,6 +491,7 @@ local function RefreshChannelPresence()
     -- Channel join events only describe changes after the addon is loaded.
     -- Enumerating the current roster closes the "everyone was already
     -- online when I logged in" gap without using /who.
+    RefreshLocalGuildMembers()
     wipe(presence)
     local memberCount = GetNumChannelMembers(guildChannel) or 0
     for index = 1, memberCount do
@@ -711,6 +741,9 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
     -- from GetGuildRosterInfo.
     if guild then return end
     local tag, payload = message:match('^(%a+)#(.*)$')
+    if tag and ns.peerNames[tag] then
+        peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
+    end
     MergePeerPayload(tag, payload, sender, 'broadcast')
 end
 
@@ -727,6 +760,8 @@ local function OnAddonMessage(prefix, message, channel, sender)
     if channel == 'GUILD' then
         local tag, payload = message:match('^' .. LOCAL_GUILD_PREFIX .. '(%a+)#(.*)$')
         if tag and payload then
+            peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
+            ns.MarkRecent(recentPayloads, tag .. '#' .. payload, GetTime(), PAYLOAD_DEDUP_SECONDS)
             MergePeerPayload(tag, payload, nil, 'whisper')
         end
         return
@@ -741,8 +776,11 @@ local function OnAddonMessage(prefix, message, channel, sender)
         -- client from triggering the same full whisper sync.
         if helloTag ~= ns.ownTag and ns.peerNames[helloTag] then
             local now = GetTime()
-            if not acceptedHello[helloTag] or acceptedHello[helloTag] <= now then
+            if peerFreshUntil[helloTag] and peerFreshUntil[helloTag] > now then
+                ns.syncStats.helloSuppressed = ns.syncStats.helloSuppressed + 1
+            elseif not acceptedHello[helloTag] or acceptedHello[helloTag] <= now then
                 acceptedHello[helloTag] = now + SYNC_COOLDOWN_SECONDS
+                ns.syncStats.ackTX = ns.syncStats.ackTX + 1
                 SendControlMessage(sender, ACK_PREFIX .. ns.ownTag .. '#' .. helloNonce, 'TX handshake acknowledgement to')
             end
         end
@@ -767,9 +805,18 @@ local function OnAddonMessage(prefix, message, channel, sender)
     end
 
     local tag, payload = message:match('^(%a+)#(.*)$')
+    if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag] then
+        peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
+    end
     MergePeerPayload(tag, payload, sender, 'whisper')
     if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag] then
-        SendLocalGuildPayload(tag, payload)
+        local duplicate = ns.MarkRecent(recentPayloads, tag .. '#' .. payload,
+            GetTime(), PAYLOAD_DEDUP_SECONDS)
+        if duplicate then
+            ns.syncStats.duplicateFanoutSuppressed = ns.syncStats.duplicateFanoutSuppressed + 1
+        else
+            SendLocalGuildPayload(tag, payload)
+        end
     end
 end
 
@@ -866,6 +913,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
     elseif event == 'GUILD_ROSTER_UPDATE' then
         EnsureAPIHandler()
         UpdateConfig()
+        RefreshLocalGuildMembers()
         C_Timer.After(2, RefreshChannelPresence)
         RequestRefresh()
     elseif event == 'PLAYER_GUILD_UPDATE' then
@@ -927,6 +975,18 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
         local peers = {}
         for tag in pairs(ns.peerNames or {}) do peers[#peers + 1] = tag end
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Known confederation tags: %s']):format(table.concat(peers, ', ')))
+        local presentCount, localCount = 0, 0
+        for key in pairs(presence) do
+            presentCount = presentCount + 1
+            if localGuildMembers[key] then localCount = localCount + 1 end
+        end
+        local stats = ns.syncStats
+        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Sync presence=%d local=%d remote=%d queue=%d hello=%d ack=%d suppressed=%d']):format(
+            presentCount, localCount, math.max(0, presentCount - localCount), #handshakeQueue,
+            stats.helloTX, stats.ackTX, stats.helloSuppressed))
+        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Sync full=%d chunks=%d failed=%d guild-fanout=%d duplicate-fanout=%d']):format(
+            stats.fullTX, stats.chunksDelivered, stats.sendFailed,
+            stats.localFanout, stats.duplicateFanoutSuppressed))
     elseif cmd == 'debug' then
         ns.debugAddonMsg = not ns.debugAddonMsg
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Addon message debug=%s']):format(tostring(ns.debugAddonMsg)))

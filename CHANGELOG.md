@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.10
+
+**Sync efficiency**
+- Excluded members of the player's own guild from GreenWall-channel handshake candidates; their roster is already available locally.
+- Added a ten-minute peer-guild freshness lease shared through local guild fan-out, suppressing redundant acknowledgements after one client distributes fresh data.
+- Suppressed identical roster payloads from being fanned out to the local guild repeatedly within a short burst.
+- Changed local guild roster fan-out from ChatThrottleLib `NORMAL` to `BULK`; HELLO and ACK remain `NORMAL`.
+- Extended `/gwgr status` with presence, queue, transfer, failure, fan-out, and suppression counters.
+
 ## 1.0.9
 
 **Roster accuracy**
