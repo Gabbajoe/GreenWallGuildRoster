@@ -29,6 +29,8 @@ GreenWall
 
 A companion addon for **GreenWall** that shows a combined roster window for all co-guilds in your confederation — like the native guild roster, but with every alt guild's members mixed into one list.
 
+![GreenWall GuildRoster](https://raw.githubusercontent.com/Gabbajoe/GreenWallGuildRoster/main/docs/project-icon.png)
+
 ## Why
 
 GreenWall bridges your guild *chat*, but each co-guild's roster still only shows its own members. If your confederation is split across multiple guilds for the member cap, you have no easy way to see who's online, what level/class they are, or find someone across the whole confederation. This addon fixes that.
@@ -45,6 +47,8 @@ GreenWall bridges your guild *chat*, but each co-guild's roster still only shows
 - **Minimap button** — drag to reposition, left-click opens the window, right-click sends a broadcast
 - Tracks and shows how long ago you last shared your roster, so you know when it's getting stale
 - Zone names are translated for the reader's own client language, not the sender's
+- **Traffic-aware background sync** — own-guild targets are excluded, duplicate transfers are suppressed, and all automatic chunks are paced through ChatThrottleLib
+- **Update reminder** learned from other GuildRoster clients, without web requests or an automatic downloader
 
 ## Setup
 
@@ -54,19 +58,25 @@ GreenWall bridges your guild *chat*, but each co-guild's roster still only shows
 ## Usage
 
 - `/gwgr` — open/close the roster window
-- `/gwgr broadcast` — share your current guild roster with the other co-guilds (also happens automatically in the background afterward)
+- `/gwgr broadcast` — share a fresh online-roster snapshot with the other co-guilds and establish first contact
 - `/gwgr setmain <name>` — mark the character you're on as an alt of `<name>`
-- `/gwgr status` — check GreenWallAPI availability and your confederation tag
+- `/gwgr status` — check GreenWallAPI, peer, queue, transfer, failure, fan-out, and suppression state
+- `/gwgr minimap` — show or hide the minimap button
+- `/gwgr debug` — toggle addon-message logging for troubleshooting
 
 Click Broadcast once (button, minimap right-click, or `/gwgr broadcast`) to introduce your guild to the others — recent WoW clients block addons from silently automating chat/channel messages, so this first step needs a deliberate click. After that, a background whisper-based sync keeps everyone's data current automatically, no further clicks needed. The window shows how long ago you last broadcast, as a reminder in case the automatic sync ever needs a nudge.
 
 ## How it works
 
-Two transports: a manual one over GreenWall's own confederation channel for first contact (full roster, including offline members), and an automatic background one using whispered addon messages between online members for ongoing updates. See the README for the full technical breakdown.
+Two transports: a manual one over GreenWall's own confederation channel for first contact (a snapshot of members currently reported online), and a presence-confirmed background exchange between reachable GuildRoster clients for ongoing updates. Own-guild players are never treated as cross-guild whisper targets. HELLO messages are paced, one successful exchange is shared locally, fresh peer-guild data suppresses redundant acknowledgements, and duplicate fan-outs are discarded. See the README for the full technical breakdown.
+
+## Current limitation
+
+Remote snapshots contain up to 200 members currently reported online. Previously known members remain visible when they later go offline, but the addon cannot export every remote character that has never been observed online.
 
 ## Contributing a translation
 
-Play on a language other than English/German and want zone names translated correctly? See [TRANSLATING.md](https://github.com/Gabbajoe/GreenWallGuildRoster/blob/main/TRANSLATING.md) - a two-minute in-game export for outdoor zones, plus automatic background collection of dungeon names as you play. No research needed either way.
+Play on a language other than English/German and want zone names translated correctly? See [TRANSLATING.md](https://github.com/Gabbajoe/GreenWallGuildRoster/blob/main/docs/TRANSLATING.md) - a two-minute in-game export for outdoor zones, plus automatic background collection of dungeon names as you play. No research needed either way.
 
 ## Source
 
@@ -77,7 +87,7 @@ https://github.com/Gabbajoe/GreenWallGuildRoster
 
 ## Required Dependency (reminder)
 
-GreenWall must be installed and enabled — this addon has a hard `## Dependencies: GreenWall` in its TOC and will print a warning in chat if it isn't found.
+GreenWall must be installed and enabled. The hard `## Dependencies: GreenWall` entry in the TOC prevents GuildRoster from loading without it.
 
 ## Changelog
 

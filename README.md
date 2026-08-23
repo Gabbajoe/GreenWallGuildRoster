@@ -6,7 +6,9 @@
 
 A companion addon for [GreenWall](https://github.com/AIE-Guild/GreenWall) that shows a combined roster window for all co-guilds in a GreenWall confederation — like the native guild roster, but with everyone's alt guilds mixed into one list.
 
-![icon](icon.png)
+<p align="center">
+  <img src="docs/project-icon.png" alt="GreenWall GuildRoster crest" width="320">
+</p>
 
 ## What it does
 
@@ -21,9 +23,11 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - Minimap button (drag to reposition, left-click toggles the window, right-click broadcasts) - can be hidden via Options > AddOns > GreenWall GuildRoster or `/gwgr minimap`
 - Tracks and displays how long ago you last broadcast your own roster
 - Self-declared cross-guild alt links (`/gwgr setmain <name>`) show under Alt for a twink in another co-guild
-- Presence-confirmed background sync, without `/who` discovery or cache-based whisper targets (see How it works)
+- Presence-confirmed, paced background sync without `/who` discovery or stale cache-based whisper targets
+- Shared freshness leases and payload deduplication prevent every local client from repeating the same cross-guild transfer
+- Automatic update notification learned from other GuildRoster clients; no web request or background downloader
 - A departed co-guild member (kicked, left, character deleted) gets explicitly cleared out instead of lingering as a stale entry forever
-- English/German UI, auto-detected from your client language - see [TRANSLATING.md](TRANSLATING.md) to help add another
+- English/German UI, auto-detected from your client language - see [TRANSLATING.md](docs/TRANSLATING.md) to help add another
 
 ## Requirements
 
@@ -40,22 +44,41 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - `/gwgr broadcast` — send your guild's current roster to the other co-guilds (via GreenWall's confederation channel, manual)
 - `/gwgr status` — show GreenWallAPI availability and your own tag
 - `/gwgr setmain <name>` — mark the character you're on as an alt of `<name>` (run this on the twink); leave the name off to clear it
+- `/gwgr minimap` — show or hide the minimap button
+- `/gwgr debug` — toggle explicit addon-message logging for troubleshooting
 
 ## How it works
 
 There are two transports, because Classic's client restricts what's available for each:
 
-1. **Manual channel broadcast** (`Broadcast`): each client reads its own guild's full roster (including offline members, normally only visible within your own guild) and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
+1. **Manual channel broadcast** (`Broadcast`): each client reads a full snapshot of its guild members currently reported online and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
 2. **Presence-confirmed whisper sync**: GuildRoster reads the members currently present in GreenWall's normal guild bridge after login and observes later joins/leaves. Own-guild members are excluded because their roster is already available locally. It sends a small HELLO through a paced queue; only a client that answers is eligible for a full roster exchange. Each client releases at most one HELLO every 30 seconds and retries only clients that are still present after a cooldown. One confirmed exchange is fanned out at `BULK` priority to other GuildRoster users in that sender's own guild. That fan-out establishes a short shared freshness lease, so other local clients suppress redundant acknowledgements for the same peer guild. `/who` is not used at all: it neither discovers targets nor creates roster rows.
 
 So: click Broadcast once to introduce your guild to the other co-guild(s). After that, clients that appear on the GreenWall bridge can exchange a roster only after confirming that GuildRoster is present and reachable. The window shows how long ago your last manual broadcast was as a useful freshness indicator.
+
+### Keeping whisper traffic small
+
+- Members of your own guild are never queued as cross-guild whisper targets.
+- HELLO attempts are paced to at most one target per 30-second service pass.
+- A confirmed exchange is shared locally at `BULK` priority, giving every
+  GuildRoster client in that guild the same fresh data.
+- A ten-minute peer-guild freshness lease suppresses redundant ACKs and the
+  full roster transfers they would trigger.
+- Identical local fan-out payloads are deduplicated during bursts.
+- Full roster chunks are chained through ChatThrottleLib and stop immediately
+  after the first failed delivery.
+
+The 1.1 development long-session test recorded 200 suppressed ACKs versus only
+five ACKs sent, a normally empty queue, and zero send failures. See the
+[full evaluation](docs/LONG_SESSION_EVALUATION_1.1.0-dev.1.md).
 
 **Relationship to GreenWall's code:** the broadcast/receive logic here is a from-scratch implementation on top of GreenWall's public `GreenWallAPI`, not code reused from GreenWall's internals. This addon also reads the `GWp:guildname:tag` lines already present in your Guild Information page, purely to map a tag back to a guild name for display — that's read-only and doesn't touch any of GreenWall's own Lua state.
 
 ## Known limitations
 
-- Roster data for the other co-guild(s) is only as fresh as the last time someone there broadcasted.
-- A manual channel broadcast is still a synchronous, user-triggered operation. It is capped to 200 online rows and conservatively chunked; automatic whisper and local-guild synchronization use ChatThrottleLib pacing.
+- Initial discovery still needs one user-triggered broadcast. After first contact, freshness depends on at least one reachable, current GuildRoster client in the source guild.
+- Remote full snapshots contain up to 200 members currently reported online. An offline remote row is retained after a previously known online member goes offline; this is not a complete export of every never-seen offline character in that guild.
+- A manual channel broadcast is synchronous and user-triggered. Automatic whisper and local-guild synchronization use ChatThrottleLib pacing.
 - Built and tested against Classic Era (Interface 11509).
 
 ## License
@@ -64,4 +87,4 @@ MIT, see [LICENSE](LICENSE). The icon is AI-generated artwork made for this proj
 
 ## Contributing a translation
 
-Play on a non-English/German client and want zone names translated correctly for your language? See [TRANSLATING.md](TRANSLATING.md) - a two-minute in-game export for outdoor zones/cities/battlegrounds, plus automatic background collection of dungeon/instance names as you play. No research needed either way.
+Play on a non-English/German client and want zone names translated correctly for your language? See [TRANSLATING.md](docs/TRANSLATING.md) - a two-minute in-game export for outdoor zones/cities/battlegrounds, plus automatic background collection of dungeon/instance names as you play. No research needed either way.

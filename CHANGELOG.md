@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.0
+
+**Updates and branding**
+- Added peer-based version announcements and a once-per-version update reminder.
+  No web request is performed, older clients safely ignore the message, and
+  the addon never downloads or installs updates itself.
+- Added a compact, high-contrast GuildRoster shield for the minimap button and
+  a detailed confederation crest for the addon list and project pages.
+- The minimap hover highlight follows the shield's transparent silhouette
+  instead of drawing a generic square flare.
+
+**Release quality**
+- Retained lightweight `/gwgr status` synchronization counters and explicit
+  `/gwgr debug` logging for useful problem reports without periodic background
+  diagnostics.
+- Cleaned obsolete development performance data from SavedVariables while
+  preserving known peer-version information.
+- Reorganized and tightened release packaging so archives contain only addon
+  runtime files and the license.
+- Validated the release during an extended session and a final live smoke test:
+  combined roster, minimap interactions, broadcast, bounded queues, traffic
+  suppression and zero send failures all passed.
+
 ## 1.0.10
 
 **Sync efficiency**

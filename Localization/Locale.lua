@@ -62,6 +62,7 @@ if GetLocale() == 'deDE' then
     L['Sync presence=%d local=%d remote=%d queue=%d hello=%d ack=%d suppressed=%d'] = 'Sync anwesend=%d lokal=%d remote=%d Warteschlange=%d Hello=%d Ack=%d unterdrückt=%d'
     L['Sync full=%d chunks=%d failed=%d guild-fanout=%d duplicate-fanout=%d'] = 'Sync vollständig=%d Pakete=%d fehlgeschlagen=%d Gilden-Fanout=%d Duplikat-Fanout=%d'
     L['Addon message debug=%s'] = 'Addon-Message-Debug=%s'
+    L['A newer version is available: %s (installed: %s). Please update through CurseForge, Wago, or GitHub.'] = 'Eine neuere Version ist verfügbar: %s (installiert: %s). Bitte über CurseForge, Wago oder GitHub aktualisieren.'
     L['Minimap button %s.'] = 'Minimap-Button %s.'
     L['hidden'] = 'ausgeblendet'
     L['shown'] = 'eingeblendet'

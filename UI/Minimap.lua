@@ -16,7 +16,7 @@ button:RegisterForClicks('LeftButtonUp', 'RightButtonUp')
 button:RegisterForDrag('LeftButton')
 
 local icon = button:CreateTexture(nil, 'BACKGROUND')
-icon:SetTexture('Interface\\AddOns\\GreenWallGuildRoster\\icon.png')
+icon:SetTexture('Interface\\AddOns\\GreenWallGuildRoster\\Assets\\icon-minimap.png')
 icon:SetSize(20, 20)
 icon:SetPoint('CENTER', 0, 0)
 
@@ -25,9 +25,15 @@ border:SetTexture('Interface\\Minimap\\MiniMap-TrackingBorder')
 border:SetSize(54, 54)
 border:SetPoint('TOPLEFT', 0, 0)
 
--- Subtle brighten-on-hover instead of the flashy zoom-button flare - this
--- is the standard soft highlight most minimap addon buttons use.
-button:SetHighlightTexture('Interface\\Buttons\\UI-Common-MouseHilight', 'ADD')
+-- Reuse the icon's own alpha silhouette for hover feedback. A generic square
+-- highlight leaves bright corners around transparent custom artwork; this
+-- additive copy brightens only the shield itself.
+local highlight = button:CreateTexture(nil, 'HIGHLIGHT')
+highlight:SetTexture('Interface\\AddOns\\GreenWallGuildRoster\\Assets\\icon-minimap.png')
+highlight:SetAllPoints(icon)
+highlight:SetBlendMode('ADD')
+highlight:SetAlpha(0.35)
+button:SetHighlightTexture(highlight)
 
 local function UpdatePosition()
     local angle = math.rad(GreenWallGuildRosterDB.minimapAngle or 220)

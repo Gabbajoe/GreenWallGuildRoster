@@ -2,6 +2,10 @@ package-as: GreenWallGuildRoster
 manual-changelog: CHANGELOG-release.md
 license-output: LICENSE
 ignore:
+  - .github
+  - .gitignore
+  - CHANGELOG.md
+  - CHANGELOG-release.md
+  - README.md
+  - docs
   - tests
-  - CURSEFORGE.md
-  - DESCRIPTION.md

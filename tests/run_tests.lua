@@ -1,6 +1,6 @@
 -- Minimal, dependency-free test runner - no test framework needed for a
 -- suite this small. Only covers the handful of functions with zero WoW-API
--- dependency (Logic.lua, ZoneData.lua); everything else in this addon is
+-- dependency (Core/Logic.lua, Core/ZoneData.lua); everything else in this addon is
 -- UI/event glue that isn't worth mocking a whole fake WoW client for.
 --
 -- Run from anywhere: `lua tests/run_tests.lua`
@@ -17,8 +17,8 @@ local function loadAddonFile(path)
     return chunk('GreenWallGuildRoster', ns)
 end
 
-loadAddonFile('Logic.lua')
-loadAddonFile('ZoneData.lua')
+loadAddonFile('Core/Logic.lua')
+loadAddonFile('Core/ZoneData.lua')
 
 local passCount = 0
 local failures = {}
@@ -67,6 +67,11 @@ check(not ns.MarkRecent(recent, 'S#payload', 151, 30), 'payload after refreshed 
 recent.old = 1
 ns.MarkRecent(recent, 'S#other', 200, 30)
 check(recent.old == nil, 'expired payload keys are pruned instead of growing forever')
+
+eq(ns.CompareVersions('1.1.0', '1.0.10'), 1, 'minor release compares newer than patch release')
+eq(ns.CompareVersions('1.0.10', '1.0.9'), 1, 'multi-digit patch versions compare numerically')
+eq(ns.CompareVersions('1.1.0-dev.1', '1.1.0'), 0, 'development suffix does not invent a newer public release')
+eq(ns.CompareVersions('1.0.9', '1.1.0'), -1, 'older version compares lower')
 
 -- NewPaletteAssigner ------------------------------------------------------
 local nextColor = ns.NewPaletteAssigner()

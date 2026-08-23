@@ -63,3 +63,18 @@ local function MarkRecent(cache, key, now, ttl)
     return duplicate
 end
 ns.MarkRecent = MarkRecent
+
+local function VersionParts(version)
+    local major, minor, patch = tostring(version or ''):match('^(%d+)%.(%d+)%.(%d+)')
+    return tonumber(major) or 0, tonumber(minor) or 0, tonumber(patch) or 0
+end
+
+local function CompareVersions(left, right)
+    local l1, l2, l3 = VersionParts(left)
+    local r1, r2, r3 = VersionParts(right)
+    if l1 ~= r1 then return l1 < r1 and -1 or 1 end
+    if l2 ~= r2 then return l2 < r2 and -1 or 1 end
+    if l3 ~= r3 then return l3 < r3 and -1 or 1 end
+    return 0
+end
+ns.CompareVersions = CompareVersions

@@ -757,6 +757,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
         print(('|cff33ff99GreenWallGuildRoster|r: RX addon-msg channel=%s sender=%s'):format(
             tostring(channel), tostring(sender)))
     end
+    if ns.HandleVersionMessage and ns.HandleVersionMessage(message, channel, sender) then return end
     if channel == 'GUILD' then
         local tag, payload = message:match('^' .. LOCAL_GUILD_PREFIX .. '(%a+)#(.*)$')
         if tag and payload then
@@ -782,6 +783,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
                 acceptedHello[helloTag] = now + SYNC_COOLDOWN_SECONDS
                 ns.syncStats.ackTX = ns.syncStats.ackTX + 1
                 SendControlMessage(sender, ACK_PREFIX .. ns.ownTag .. '#' .. helloNonce, 'TX handshake acknowledgement to')
+                if ns.SendVersionTo then ns.SendVersionTo(sender) end
             end
         end
         return
@@ -795,6 +797,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
             -- elapses, then let the presence queue consider it again.
             pending.nonce = nil
             pending.retryAfter = GetTime() + SYNC_COOLDOWN_SECONDS
+            if ns.SendVersionTo then ns.SendVersionTo(sender) end
             -- Keep the expensive roster transfer outside the join event and
             -- behind a successful acknowledgement.
             C_Timer.After(math.random(3, 8), function()
