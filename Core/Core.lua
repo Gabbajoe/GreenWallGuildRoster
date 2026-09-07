@@ -179,8 +179,10 @@ local LEAVE_MARKER = '2'
 -- automatic delta sync happens to have nothing new to report right then -
 -- it shouldn't silently no-op just because nobody's status changed in
 -- the last 30 seconds.
-local function CollectOwnRoster(forceFull)
-    if not ns.ownTag then return {} end
+local snapshotRevision = 0
+
+local function PrepareSnapshot(forceFull)
+    if not ns.ownTag then return nil end
 
     local total = GetNumGuildMembers() or 0
     -- A real guild is never reported as having zero members (you're always
@@ -188,7 +190,7 @@ local function CollectOwnRoster(forceFull)
     -- not that everyone's actually gone. Bail out before touching
     -- lastKnownMembers at all, so a transient empty read can never look
     -- like a mass departure.
-    if total == 0 then return {} end
+    if total == 0 then return nil end
 
     local currentOnlineSet = {}
     local currentMembers = {}
@@ -209,13 +211,14 @@ local function CollectOwnRoster(forceFull)
 
     local rows = {}
     local isFullSync = forceFull or (GetTime() - lastFullSyncTime) >= FULL_SYNC_INTERVAL
+    local nextFullSyncTime = lastFullSyncTime
 
     if isFullSync then
         for _, row in pairs(onlineRow) do
             if #rows >= MAX_BROADCAST_ROWS then break end
             rows[#rows + 1] = row
         end
-        lastFullSyncTime = GetTime()
+        nextFullSyncTime = GetTime()
     else
         for name, row in pairs(onlineRow) do
             if not lastOnlineSet[name] and #rows < MAX_BROADCAST_ROWS then
@@ -252,30 +255,59 @@ local function CollectOwnRoster(forceFull)
     -- currentMembers would drop them after their first miss, before a
     -- second scan ever got a chance to confirm it).
     local newKnownMembers = {}
+    local nextMissingStreak = {}
+    for name, streak in pairs(missingStreak) do nextMissingStreak[name] = streak end
     for name in pairs(currentMembers) do
         newKnownMembers[name] = true
     end
     for prevName in pairs(lastKnownMembers) do
         if not currentMembers[prevName] then
-            local streak = (missingStreak[prevName] or 0) + 1
+            local streak = (nextMissingStreak[prevName] or 0) + 1
             if streak >= MISSING_STREAK_THRESHOLD then
                 if #rows < MAX_BROADCAST_ROWS then
                     rows[#rows + 1] = strjoin(';', Sanitize(prevName), '', '0', '', '', LEAVE_MARKER, '', '0')
                 end
-                missingStreak[prevName] = nil
+                nextMissingStreak[prevName] = nil
                 -- confirmed gone - not added to newKnownMembers, so this stops here.
             else
-                missingStreak[prevName] = streak
+                nextMissingStreak[prevName] = streak
                 newKnownMembers[prevName] = true
             end
         else
-            missingStreak[prevName] = nil
+            nextMissingStreak[prevName] = nil
         end
     end
 
-    lastOnlineSet = currentOnlineSet
-    lastKnownMembers = newKnownMembers
-    return rows
+    local snapshot = {
+        rows = rows,
+        kind = isFullSync and 'full' or 'delta',
+        preparedAt = GetTime(),
+        baseRevision = snapshotRevision,
+        proposed = {
+            lastOnlineSet = currentOnlineSet,
+            lastKnownMembers = newKnownMembers,
+            missingStreak = nextMissingStreak,
+            lastFullSyncTime = nextFullSyncTime,
+        },
+    }
+    if ns.syncStats then ns.syncStats.prepared = ns.syncStats.prepared + 1 end
+    return snapshot
+end
+
+local function CommitSnapshot(snapshot)
+    if not snapshot or snapshot.baseRevision ~= snapshotRevision then return false end
+    lastOnlineSet = snapshot.proposed.lastOnlineSet
+    lastKnownMembers = snapshot.proposed.lastKnownMembers
+    missingStreak = snapshot.proposed.missingStreak
+    lastFullSyncTime = snapshot.proposed.lastFullSyncTime
+    snapshotRevision = snapshotRevision + 1
+    if ns.syncStats then ns.syncStats.committed = ns.syncStats.committed + 1 end
+    return true
+end
+
+local function AbortSnapshot(snapshot)
+    if not snapshot then return end
+    if ns.syncStats then ns.syncStats.aborted = ns.syncStats.aborted + 1 end
 end
 
 -- Shared by both transports below: splits the roster into chunks that fit
@@ -327,21 +359,25 @@ end
 -- them all up front and hoping to cancel the rest (CTL has no public
 -- "cancel this queue" API, so that wouldn't actually stop anything
 -- already queued).
-local function SendChunkedTo(target, chunks, debugLabel)
+local function SendChunkedTo(target, chunks, debugLabel, onComplete, onAbort)
     debugLabel = debugLabel or ''
     local queueName = ADDON_MSG_PREFIX .. ':' .. target
     local function sendChunk(i)
-        if i > #chunks then return end
+        if i > #chunks then
+            if onComplete then onComplete() end
+            return
+        end
         ChatThrottleLib:SendAddonMessage('BULK', ADDON_MSG_PREFIX, ns.ownTag .. '#' .. chunks[i], 'WHISPER', target, queueName,
             function(_, didSend, sendResult)
                 if ns.debugAddonMsg then
                     print(('|cff33ff99GreenWallGuildRoster|r: TX addon-msg%s to %s chunk %d/%d didSend=%s sendResult=%s'):format(debugLabel, target, i, #chunks, tostring(didSend), tostring(sendResult)))
                 end
-                if sendResult == 0 then
+                if didSend and sendResult == 0 then
                     ns.syncStats.chunksDelivered = ns.syncStats.chunksDelivered + 1
                     sendChunk(i + 1)
                 else
                     ns.syncStats.sendFailed = ns.syncStats.sendFailed + 1
+                    if onAbort then onAbort() end
                 end
             end)
     end
@@ -353,11 +389,18 @@ end
 -- the handshake initiator and the first-contact reply in MergePeerPayload.
 local function SendFullRosterTo(target)
     if not ns.ownTag then return end
-    local rows = CollectOwnRoster(true)
-    if #rows == 0 then return end
-    local chunks = ChunkRows(rows, 200)
+    local snapshot = PrepareSnapshot(true)
+    if not snapshot or #snapshot.rows == 0 then
+        -- No remote mutation exists to accept or reject, but this scan still
+        -- advances the local missing-member debounce state.
+        CommitSnapshot(snapshot)
+        return
+    end
+    local chunks = ChunkRows(snapshot.rows, 200)
     ns.syncStats.fullTX = ns.syncStats.fullTX + 1
-    SendChunkedTo(target, chunks, ' (reply)')
+    SendChunkedTo(target, chunks, ' (reply)',
+        function() CommitSnapshot(snapshot) end,
+        function() AbortSnapshot(snapshot) end)
 end
 
 -- A client is only eligible for a roster whisper after it was seen joining
@@ -384,7 +427,15 @@ ns.syncStats = {
     helloTX = 0, ackTX = 0, helloSuppressed = 0,
     fullTX = 0, chunksDelivered = 0, sendFailed = 0,
     localFanout = 0, duplicateFanoutSuppressed = 0,
+    prepared = 0, staged = 0, committed = 0, aborted = 0, expired = 0,
+    transactionRejected = 0, passThroughQueued = 0,
+    passThroughSubmitted = 0, passThroughEchoed = 0, legacyFallback = 0,
 }
+
+local transactionStager = ns.TransactionProtocol.NewStager({
+    maxTransactions = 16, maxCompleted = 64, maxBytes = 32768, maxChunks = 32,
+    maxPayloadBytes = 120, maxRowBytes = 120, ttl = 120,
+})
 
 ResetGuildSessionState = function()
     wipe(lastOnlineSet)
@@ -399,6 +450,8 @@ ResetGuildSessionState = function()
     wipe(acceptedHello)
     wipe(peerFreshUntil)
     wipe(recentPayloads)
+    transactionStager:Reset()
+    snapshotRevision = snapshotRevision + 1
     ns.lastRosterUpdate = 0
 end
 
@@ -638,7 +691,7 @@ local function MergePeerPayload(tag, payload, sender, source)
     local store = GreenWallGuildRosterDB.peers[tag]
 
     -- Defense in depth against a sender whose own leave-detection glitched
-    -- (older build, or the sanity guard in CollectOwnRoster missed some
+    -- (older build, or the sanity guard in PrepareSnapshot missed some
     -- other edge case) - a single payload chunk claiming a large chunk of
     -- an already-known guild has left all at once is far more likely to be
     -- a bad read than a real mass departure. Skip leave markers for this
@@ -717,14 +770,19 @@ end
 -- 190 chars of base64, leaving room for the rest of the frame.
 local function Broadcast()
     if not GreenWallAPIAvailable() or not ns.ownTag then return end
-    local rows = CollectOwnRoster(true)
-    if #rows == 0 then return end
-
-    local chunks = ChunkRows(rows, 140)
-    for _, payload in ipairs(chunks) do
-        GreenWallAPI.SendMessage(ADDON_NAME, ns.ownTag .. '#' .. payload)
+    local snapshot = PrepareSnapshot(true)
+    if not snapshot or #snapshot.rows == 0 then
+        CommitSnapshot(snapshot)
+        return
     end
 
+    local chunks = ChunkRows(snapshot.rows, 140)
+    for _, payload in ipairs(chunks) do
+        GreenWallAPI.SendMessage(ADDON_NAME, ns.ownTag .. '#' .. payload)
+        ns.syncStats.legacyFallback = ns.syncStats.legacyFallback + 1
+    end
+
+    CommitSnapshot(snapshot)
     GreenWallGuildRosterDB.lastBroadcast = time()
     if ns.RefreshFrame then ns.RefreshFrame() end
 end
@@ -743,6 +801,19 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
     local tag, payload = message:match('^(%a+)#(.*)$')
     if tag and ns.peerNames[tag] then
         peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
+    end
+    if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag]
+        and payload:sub(1, 3) == 'T1|' then
+        local status, result = transactionStager:Handle(tag, sender, payload, GetTime())
+        if status == 'staged' or status == 'duplicate' then
+            ns.syncStats.staged = ns.syncStats.staged + 1
+        elseif status == 'committed' then
+            ns.syncStats.committed = ns.syncStats.committed + 1
+            MergePeerPayload(result.tag, result.payload, result.sender, 'broadcast')
+        elseif status == 'rejected' then
+            ns.syncStats.transactionRejected = ns.syncStats.transactionRejected + 1
+        end
+        return
     end
     MergePeerPayload(tag, payload, sender, 'broadcast')
 end
@@ -944,6 +1015,7 @@ end)
 -- once and cannot be retried until it appears again.
 local function ScheduleHandshakeService()
     C_Timer.After(math.random(HANDSHAKE_DISPATCH_INTERVAL - 5, HANDSHAKE_DISPATCH_INTERVAL + 5), function()
+        ns.syncStats.expired = ns.syncStats.expired + transactionStager:Prune(GetTime())
         QueueDueHandshakes()
         ServiceHandshakeQueue()
         ScheduleHandshakeService()
@@ -984,12 +1056,19 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
             if localGuildMembers[key] then localCount = localCount + 1 end
         end
         local stats = ns.syncStats
+        local transactionDepth, transactionBytes = transactionStager:Depth()
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Sync presence=%d local=%d remote=%d queue=%d hello=%d ack=%d suppressed=%d']):format(
             presentCount, localCount, math.max(0, presentCount - localCount), #handshakeQueue,
             stats.helloTX, stats.ackTX, stats.helloSuppressed))
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Sync full=%d chunks=%d failed=%d guild-fanout=%d duplicate-fanout=%d']):format(
             stats.fullTX, stats.chunksDelivered, stats.sendFailed,
             stats.localFanout, stats.duplicateFanoutSuppressed))
+        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Transactions prepared=%d staged=%d committed=%d aborted=%d expired=%d rejected=%d queue=%d/%dB legacy=%d']):format(
+            stats.prepared, stats.staged, stats.committed, stats.aborted,
+            stats.expired, stats.transactionRejected, transactionDepth,
+            transactionBytes, stats.legacyFallback))
+        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Pass-through queued/submitted/echoed=%d/%d/%d (phase 1: send disabled)']):format(
+            stats.passThroughQueued, stats.passThroughSubmitted, stats.passThroughEchoed))
     elseif cmd == 'debug' then
         ns.debugAddonMsg = not ns.debugAddonMsg
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Addon message debug=%s']):format(tostring(ns.debugAddonMsg)))

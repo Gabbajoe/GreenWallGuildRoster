@@ -19,6 +19,7 @@ end
 
 loadAddonFile('Core/Logic.lua')
 loadAddonFile('Core/ZoneData.lua')
+loadAddonFile('Core/TransactionProtocol.lua')
 
 local passCount = 0
 local failures = {}
@@ -91,6 +92,52 @@ eq(ns.ToCanonicalZone('Die Höhlen des Wehklagens'), 'Wailing Caverns', 'Wailing
 eq(ns.FromCanonicalZone('Stormwind City'), 'Stormwind', 'capital cities are NOT translated in-game')
 _G.__TEST_LOCALE = 'enUS'
 eq(ns.FromCanonicalZone('Wailing Caverns'), 'Wailing Caverns', 'enUS client: zone text passes through unchanged')
+
+-- TransactionProtocol -------------------------------------------------------
+local txp = ns.TransactionProtocol
+local begin = txp.EncodeBegin('abc-1', 'full', 2)
+local data1 = txp.EncodeData('abc-1', 1, 'Alice;MAGE;60;Stormwind;;1;;0')
+local data2 = txp.EncodeData('abc-1', 2, 'Bob;PRIEST;59;Ironforge;;1;;1')
+local commit = txp.EncodeCommit('abc-1')
+check(begin and data1 and data2 and commit, 'transaction frames encode')
+
+local stager = txp.NewStager({ ttl = 10, maxTransactions = 2, maxChunks = 3,
+    maxBytes = 500, maxPayloadBytes = 120, maxRowBytes = 100 })
+eq(stager:Handle('S', 'Sender-Realm', begin, 1), 'staged', 'BEGIN stages without applying')
+eq(stager:Handle('S', 'Sender-Realm', data2, 2), 'staged', 'out-of-order DATA stages')
+eq(stager:Handle('S', 'Sender-Realm', commit, 3), 'staged', 'early COMMIT changes no visible state')
+local status, result = stager:Handle('S', 'Sender-Realm', data1, 4)
+eq(status, 'committed', 'complete transaction commits after final missing DATA')
+eq(result and result.payload,
+    'Alice;MAGE;60;Stormwind;;1;;0~Bob;PRIEST;59;Ironforge;;1;;1',
+    'committed chunks preserve numbered order')
+eq(stager:Handle('S', 'Sender-Realm', data1, 5), 'duplicate', 'completed transaction replay is idempotent')
+
+local conflictStager = txp.NewStager({ maxPayloadBytes = 120 })
+conflictStager:Handle('S', 'Sender', txp.EncodeBegin('conflict', 'delta', 1), 1)
+conflictStager:Handle('S', 'Sender', txp.EncodeData('conflict', 1, 'One;MAGE;1;;;1;;0'), 2)
+local conflictStatus = conflictStager:Handle('S', 'Sender', txp.EncodeData('conflict', 1, 'Two;MAGE;1;;;1;;0'), 3)
+eq(conflictStatus, 'rejected', 'conflicting duplicate chunk rejects transaction')
+
+local malformedStager = txp.NewStager({ maxPayloadBytes = 120 })
+malformedStager:Handle('S', 'Sender', txp.EncodeBegin('badrow', 'full', 1), 1)
+local malformedStatus = malformedStager:Handle('S', 'Sender', txp.EncodeData('badrow', 1, 'not-a-roster-row'), 2)
+eq(malformedStatus, 'rejected', 'malformed roster row is rejected before commit')
+
+local expiryStager = txp.NewStager({ ttl = 5 })
+expiryStager:Handle('S', 'Sender', txp.EncodeBegin('expires', 'full', 1), 10)
+eq(expiryStager:Prune(16), 1, 'incomplete transaction expires without applying')
+local depth, stagedBytes = expiryStager:Depth()
+eq(depth, 0, 'expired transaction releases its queue slot')
+eq(stagedBytes, 0, 'expired transaction releases staged bytes')
+
+local outbound, outboundError = txp.NewOutbound('out-1', 'full', { 'one', 'two' }, 20,
+    { maxChunks = 2, maxBytes = 6, ttl = 30 })
+check(outbound and not outboundError and outbound.expiresAt == 50,
+    'bounded outbound transaction freezes valid chunks')
+local oversized = txp.NewOutbound('out-2', 'full', { '1234', '5678' }, 20,
+    { maxChunks = 2, maxBytes = 6 })
+eq(oversized, nil, 'oversized outbound transaction is rejected')
 
 print(string.format('%d passed, %d failed', passCount, #failures))
 if #failures > 0 then

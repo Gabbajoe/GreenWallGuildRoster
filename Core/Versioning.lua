@@ -1,6 +1,8 @@
 local ADDON_NAME, ns = ...
 
 local VERSION_PREFIX = 'GWGR_VERSION#'
+local CAPABILITY_PREFIX = 'GWGR_CAPS#'
+local TRANSACTION_CAPABILITY = 'TX1'
 local versionSentAt = {}
 local forwardedVersions = {}
 local state
@@ -15,6 +17,8 @@ end
 local function SendVersion(channel, target, version)
     ChatThrottleLib:SendAddonMessage('NORMAL', 'GWGRoster', VERSION_PREFIX .. (version or AddonVersion()),
         channel, target, 'GWGRoster:version:' .. (target or channel))
+    ChatThrottleLib:SendAddonMessage('NORMAL', 'GWGRoster', CAPABILITY_PREFIX .. TRANSACTION_CAPABILITY,
+        channel, target, 'GWGRoster:capability:' .. (target or channel))
 end
 
 function ns.SendVersionTo(target)
@@ -26,6 +30,12 @@ function ns.SendVersionTo(target)
 end
 
 function ns.HandleVersionMessage(message, channel, sender)
+    local capabilities = message:match('^' .. CAPABILITY_PREFIX .. '([%w,%-]+)$')
+    if capabilities then
+        local key = ns.ClientKey(sender)
+        state.knownCapabilities[key] = { capabilities = capabilities, seenAt = time() }
+        return true
+    end
     local version = message:match('^' .. VERSION_PREFIX .. '([%w%.%-]+)$')
     if not version then return false end
 
@@ -63,6 +73,8 @@ frame:SetScript('OnEvent', function(_, event, addon)
         state = GreenWallGuildRosterDB.versioning
         state.knownVersions = type(state.knownVersions) == 'table' and state.knownVersions
             or (oldDiagnostics and oldDiagnostics.knownVersions) or {}
+        state.knownCapabilities = type(state.knownCapabilities) == 'table'
+            and state.knownCapabilities or {}
         if state.lastNotifiedVersion == nil and oldDiagnostics then
             state.lastNotifiedVersion = oldDiagnostics.lastNotifiedVersion
         end

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0
+
+**Safe pass-through preparation — phase 1 of 2**
+- Split roster collection into prepare, commit and abort stages so failed or
+  incomplete transports cannot advance synchronization bookkeeping.
+- Added a bounded versioned transaction format (`BEGIN`, numbered `DATA`, and
+  `COMMIT`) and receive-side staging. Nothing is merged until every chunk is
+  present; malformed, conflicting, oversized and expired transactions are
+  discarded without changing the visible roster.
+- Added transaction capability announcements alongside the existing version
+  exchange. Older clients safely ignore the new capability frame.
+- Added transaction and future pass-through counters to `/gwgr status`.
+- Kept manual broadcasts in the legacy wire format, and left whisper sync and
+  local-guild fan-out unchanged for full backward compatibility. Automatic
+  hardware-event pass-through remains disabled until phase 2.
+
 ## 1.1.0
 
 **Updates and branding**

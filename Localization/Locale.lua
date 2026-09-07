@@ -61,6 +61,8 @@ if GetLocale() == 'deDE' then
     L['Known confederation tags: %s'] = 'Bekannte Konföderations-Tags: %s'
     L['Sync presence=%d local=%d remote=%d queue=%d hello=%d ack=%d suppressed=%d'] = 'Sync anwesend=%d lokal=%d remote=%d Warteschlange=%d Hello=%d Ack=%d unterdrückt=%d'
     L['Sync full=%d chunks=%d failed=%d guild-fanout=%d duplicate-fanout=%d'] = 'Sync vollständig=%d Pakete=%d fehlgeschlagen=%d Gilden-Fanout=%d Duplikat-Fanout=%d'
+    L['Transactions prepared=%d staged=%d committed=%d aborted=%d expired=%d rejected=%d queue=%d/%dB legacy=%d'] = 'Transaktionen vorbereitet=%d zwischengespeichert=%d übernommen=%d abgebrochen=%d abgelaufen=%d abgelehnt=%d Warteschlange=%d/%dB Legacy=%d'
+    L['Pass-through queued/submitted/echoed=%d/%d/%d (phase 1: send disabled)'] = 'Pass-through eingereiht/gesendet/bestätigt=%d/%d/%d (Phase 1: Senden deaktiviert)'
     L['Addon message debug=%s'] = 'Addon-Message-Debug=%s'
     L['A newer version is available: %s (installed: %s). Please update through CurseForge, Wago, or GitHub.'] = 'Eine neuere Version ist verfügbar: %s (installiert: %s). Bitte über CurseForge, Wago oder GitHub aktualisieren.'
     L['Minimap button %s.'] = 'Minimap-Button %s.'

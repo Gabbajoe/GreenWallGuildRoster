@@ -27,6 +27,7 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - Shared freshness leases and payload deduplication prevent every local client from repeating the same cross-guild transfer
 - Automatic update notification learned from other GuildRoster clients; no web request or background downloader
 - A departed co-guild member (kicked, left, character deleted) gets explicitly cleared out instead of lingering as a stale entry forever
+- Atomic transaction receiving prepared for the optional safe-chat transport: incomplete or malformed multi-frame snapshots never alter the visible roster
 - English/German UI, auto-detected from your client language - see [TRANSLATING.md](docs/TRANSLATING.md) to help add another
 
 ## Requirements
@@ -54,6 +55,12 @@ There are two transports, because Classic's client restricts what's available fo
 1. **Manual channel broadcast** (`Broadcast`): each client reads a full snapshot of its guild members currently reported online and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
 2. **Presence-confirmed whisper sync**: GuildRoster reads the members currently present in GreenWall's normal guild bridge after login and observes later joins/leaves. Own-guild members are excluded because their roster is already available locally. It sends a small HELLO through a paced queue; only a client that answers is eligible for a full roster exchange. Each client releases at most one HELLO every 30 seconds and retries only clients that are still present after a cooldown. One confirmed exchange is fanned out at `BULK` priority to other GuildRoster users in that sender's own guild. That fan-out establishes a short shared freshness lease, so other local clients suppress redundant acknowledgements for the same peer guild. `/who` is not used at all: it neither discovers targets nor creates roster rows.
 
+Version 1.2.0 is phase 1 of the safe pass-through rollout. It can receive a
+bounded `BEGIN`/`DATA`/`COMMIT` transaction atomically and advertises that
+capability, but it does not automatically send one. Manual Broadcast retains
+the established legacy format and remains compatible with older clients. See
+the [two-phase plan](docs/HARDWARE_EVENT_PASSTHROUGH_PLAN.md).
+
 So: click Broadcast once to introduce your guild to the other co-guild(s). After that, clients that appear on the GreenWall bridge can exchange a roster only after confirming that GuildRoster is present and reachable. The window shows how long ago your last manual broadcast was as a useful freshness indicator.
 
 ### Keeping whisper traffic small
@@ -79,6 +86,7 @@ five ACKs sent, a normally empty queue, and zero send failures. See the
 - Initial discovery still needs one user-triggered broadcast. After first contact, freshness depends on at least one reachable, current GuildRoster client in the source guild.
 - Remote full snapshots contain up to 200 members currently reported online. An offline remote row is retained after a previously known online member goes offline; this is not a complete export of every never-seen offline character in that guild.
 - A manual channel broadcast is synchronous and user-triggered. Automatic whisper and local-guild synchronization use ChatThrottleLib pacing.
+- Safe chat pass-through sending is deliberately disabled in 1.2.0 phase 1.
 - Built and tested against Classic Era (Interface 11509).
 
 ## License
