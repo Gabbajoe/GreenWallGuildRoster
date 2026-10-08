@@ -35,9 +35,16 @@ GreenWall bridges your guild *chat*, but each co-guild's roster still only shows
 - `/gwgr setmain <name>` — mark the character you're on as an alt of `<name>`
 - `/gwgr status` — check GreenWallAPI, peer, queue, transfer, failure, fan-out, and suppression state
 - `/gwgr minimap` — show or hide the minimap button
+- `/gwgr passthrough on|off` — enable or disable optional chat pass-through
 - `/gwgr debug` — toggle addon-message logging for troubleshooting
 
-Click Broadcast once (button, minimap right-click, or `/gwgr broadcast`) to introduce your guild to the others — recent WoW clients block addons from silently automating chat/channel messages, so this first step needs a deliberate click. After that, a background whisper-based sync keeps everyone's data current automatically, no further clicks needed. The window shows how long ago you last broadcast, as a reminder in case the automatic sync ever needs a nudge.
+Version 1.3.0 can share roster transactions while you type ordinary chat: each
+eligible Enter sends at most one queued frame, after your own message. This
+option defaults on and requires a currently present, transaction-capable
+GuildRoster client in each co-guild. The snapshot is confirmed only when all
+frames have been echoed. Manual Broadcast (button, minimap right-click, or
+`/gwgr broadcast`) remains available for immediate sharing and older peers.
+Presence-confirmed background whisper sync continues independently.
 
 ## How it works
 

@@ -15,6 +15,13 @@ jobs:
       - name: Validate Lua syntax
         run: find Core Localization UI Libs -name '*.lua' -print0 | xargs -0 -n1 luac5.4 -p
       - run: lua5.4 tests/run_tests.lua
+      - run: lua5.4 tests/pass_through_test.lua
+      - run: lua5.4 tests/pass_through_runtime_test.lua
+      - run: lua5.4 tests/pass_through_runtime_test.lua --namespaced
+      - run: lua5.4 tests/pass_through_runtime_test.lua --mixed
+      - run: lua5.4 tests/hardware_broker_test.lua
+      - run: lua5.4 tests/hardware_chat_test.lua
+      - run: lua5.4 tests/hardware_probe_test.lua
 
   release:
     needs: test

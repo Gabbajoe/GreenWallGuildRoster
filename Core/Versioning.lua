@@ -6,6 +6,17 @@ local TRANSACTION_CAPABILITY = 'TX1'
 local versionSentAt = {}
 local forwardedVersions = {}
 local state
+local sessionCapabilities = {}
+
+function ns.HasTransactionCapability(sender)
+    local seen = sessionCapabilities[ns.ClientKey(sender)]
+    return seen ~= nil and GetTime() - seen < 900
+end
+
+function ns.ResetTransactionCapabilities()
+    wipe(versionSentAt)
+    wipe(sessionCapabilities)
+end
 
 local function AddonVersion()
     if C_AddOns and C_AddOns.GetAddOnMetadata then
@@ -32,8 +43,13 @@ end
 function ns.HandleVersionMessage(message, channel, sender)
     local capabilities = message:match('^' .. CAPABILITY_PREFIX .. '([%w,%-]+)$')
     if capabilities then
+        if channel ~= 'WHISPER' and channel ~= 'GUILD' then return true end
         local key = ns.ClientKey(sender)
         state.knownCapabilities[key] = { capabilities = capabilities, seenAt = time() }
+        sessionCapabilities[key] = nil
+        for capability in capabilities:gmatch('[^,]+') do
+            if capability == 'TX1' then sessionCapabilities[key] = GetTime() end
+        end
         return true
     end
     local version = message:match('^' .. VERSION_PREFIX .. '([%w%.%-]+)$')

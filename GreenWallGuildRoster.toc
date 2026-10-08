@@ -2,7 +2,7 @@
 ## Title: GreenWall GuildRoster
 ## Notes: Combined roster window for GreenWall-bridged co-guilds.
 ## Author: Gabbajoe
-## Version: 1.2.0
+## Version: 1.3.0
 ## SavedVariablesPerCharacter: GreenWallGuildRosterDB
 ## Dependencies: GreenWall
 ## IconTexture: Interface\AddOns\GreenWallGuildRoster\Assets\icon.png
@@ -14,6 +14,9 @@ Localization\Locale.lua
 Core\ZoneData.lua
 Core\Logic.lua
 Core\TransactionProtocol.lua
+Core\HardwareBroker.lua
+Core\HardwareChat.lua
+Core\PassThrough.lua
 Core\Core.lua
 Core\Versioning.lua
 UI\RosterFrame.lua

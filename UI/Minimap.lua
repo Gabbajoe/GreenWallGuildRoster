@@ -167,7 +167,15 @@ pratIntegrationDesc:SetText(('%s |cff5ec4ff[60:Aruthra:S]|r: hi\n%s'):format(
     ns.L['To avoid seeing the tag twice, also turn off GreenWall\'s own co-guild tag: |cffffd200/gw tag off|r']
 ))
 
+local passThroughCB = CreateFrame('CheckButton', 'GreenWallGuildRosterPassThroughCB', optionsFrame, 'UICheckButtonTemplate')
+passThroughCB:SetPoint('TOPLEFT', pratIntegrationDesc, 'BOTTOMLEFT', -24, -12)
+_G[passThroughCB:GetName() .. 'Text']:SetText(ns.L['Use safe chat pass-through when available'])
+passThroughCB:SetScript('OnClick', function(self)
+    ns.SetSafePassThrough(self:GetChecked() and true or false)
+end)
+
 optionsFrame:SetScript('OnShow', function()
+    passThroughCB:SetChecked(GreenWallGuildRosterDB.safePassThrough ~= false)
     minimapCB:SetChecked(not GreenWallGuildRosterDB.minimapHidden)
     sourceColumnCB:SetChecked(GreenWallGuildRosterDB.showSourceColumn)
     pratIntegrationCB:SetChecked(GreenWallGuildRosterDB.pratIntegration)

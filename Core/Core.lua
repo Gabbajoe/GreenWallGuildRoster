@@ -10,6 +10,8 @@ ns.lastRosterUpdate = 0
 ns.debugAddonMsg = false
 
 local ResetGuildSessionState
+local passThrough
+local capabilityTags = {}
 
 C_ChatInfo.RegisterAddonMessagePrefix(ADDON_MSG_PREFIX)
 
@@ -438,6 +440,9 @@ local transactionStager = ns.TransactionProtocol.NewStager({
 })
 
 ResetGuildSessionState = function()
+    if passThrough then passThrough.Abort('guild-changed') end
+    wipe(capabilityTags)
+    if ns.ResetTransactionCapabilities then ns.ResetTransactionCapabilities() end
     wipe(lastOnlineSet)
     lastFullSyncTime = 0
     wipe(lastKnownMembers)
@@ -535,22 +540,104 @@ local function QueueDueHandshakes()
     end
 end
 
-local function RefreshChannelPresence()
-    if not GreenWallAPI or not GreenWallAPI.GetChannelNumbers
-        or not GetNumChannelMembers or not GetChannelRosterInfo then return end
+local channelRosterStatus = 'not-scanned'
+local channelRosterNumber, channelRosterIndex, channelRosterCount
+local RefreshChannelPresence
+local rosterRequestPending, rosterRequestAt = false, -math.huge
+local function ChannelWindowOpen()
+    return ChannelFrame and ChannelFrame.IsShown and ChannelFrame:IsShown()
+end
+local function RequestChannelRoster(displayIndex)
+    if rosterRequestPending or GetTime() - rosterRequestAt < 30 then return end
+    if ChannelWindowOpen() then channelRosterStatus = 'request-deferred-ui'; return end
+    if type(SetSelectedDisplayChannel) ~= 'function'
+        or type(GetSelectedDisplayChannel) ~= 'function' then return end
+    local previous = GetSelectedDisplayChannel()
+    local previousName, _, _, previousNumber
+    if previous and previous > 0 then
+        previousName, _, _, previousNumber = GetChannelDisplayInfo(previous)
+    end
+    local requestedName, _, _, requestedNumber = GetChannelDisplayInfo(displayIndex)
+    rosterRequestAt, rosterRequestPending = GetTime(), true
+    -- Selecting the display entry asks Blizzard to populate its member list.
+    -- No chat or addon message is submitted here. Do not touch an open UI.
+    local ok = pcall(SetSelectedDisplayChannel, displayIndex)
+    if not ok then
+        rosterRequestPending = false
+        channelRosterStatus = 'request-failed'
+        return
+    end
+    channelRosterStatus = 'requested'
+    C_Timer.After(4, function()
+        RefreshChannelPresence() -- consume the response before restoring selection
+        rosterRequestPending = false
+        -- Respect a user selection or channel-list changes during the request.
+        if ChannelWindowOpen() or GetSelectedDisplayChannel() ~= displayIndex then return end
+        local name, _, _, number = GetChannelDisplayInfo(displayIndex)
+        if name ~= requestedName or number ~= requestedNumber then return end
+        if previous and previous > 0 and previous ~= displayIndex then
+            local oldName, _, _, oldNumber = GetChannelDisplayInfo(previous)
+            if oldName == previousName and oldNumber == previousNumber then
+                SetSelectedDisplayChannel(previous)
+            end
+        end
+    end)
+end
+RefreshChannelPresence = function()
+    channelRosterNumber, channelRosterIndex, channelRosterCount = nil, nil, nil
+    local getMember = GetChannelRosterInfo or (C_ChatInfo and C_ChatInfo.GetChannelRosterInfo)
+    if type(GetNumDisplayChannels) ~= 'function' or type(GetChannelDisplayInfo) ~= 'function'
+        or type(getMember) ~= 'function' then
+        channelRosterStatus = 'api-unavailable'
+        return
+    end
+    if not GreenWallAPI or not GreenWallAPI.GetChannelNumbers then
+        channelRosterStatus = 'greenwall-unavailable'
+        return
+    end
     local guildChannel = GreenWallAPI.GetChannelNumbers()[1]
-    if not guildChannel or guildChannel == 0 then return end
+    channelRosterNumber = guildChannel
+    if not guildChannel or guildChannel == 0 then
+        channelRosterStatus = 'channel-unavailable'
+        wipe(presence)
+        return
+    end
 
-    -- Channel join events only describe changes after the addon is loaded.
-    -- Enumerating the current roster closes the "everyone was already
-    -- online when I logged in" gap without using /who.
+    -- GreenWall returns the chat number (e.g. /7), but the roster API takes
+    -- the display-list index, including headers and group-channel entries.
+    -- Resolve it afresh: joining/leaving other channels can move that index.
+    local displayIndex, memberCount
+    for index = 1, GetNumDisplayChannels() do
+        local _, header, _, number, count, active = GetChannelDisplayInfo(index)
+        if not header and number == guildChannel and active ~= false then
+            displayIndex, memberCount = index, count
+            break
+        end
+    end
+    channelRosterIndex, channelRosterCount = displayIndex, memberCount
+    if not displayIndex then channelRosterStatus = 'channel-not-listed'; return end
+    if not memberCount or memberCount < 1 then
+        channelRosterStatus = memberCount == nil and 'count-pending' or 'empty'
+        RequestChannelRoster(displayIndex)
+        return
+    end
+
+    -- A count can arrive before its names. Do not erase confirmed join-event
+    -- presence on a partial/unloaded snapshot or queue only part of the list.
+    local members = {}
+    for index = 1, memberCount do
+        local player = getMember(displayIndex, index)
+        if type(player) ~= 'string' or player == '' then
+            channelRosterStatus = 'names-pending'
+            RequestChannelRoster(displayIndex)
+            return
+        end
+        members[#members + 1] = player
+    end
     RefreshLocalGuildMembers()
     wipe(presence)
-    local memberCount = GetNumChannelMembers(guildChannel) or 0
-    for index = 1, memberCount do
-        local player = GetChannelRosterInfo(guildChannel, index)
-        if player and player ~= '' then QueueHandshake(player) end
-    end
+    for _, player in ipairs(members) do QueueHandshake(player) end
+    channelRosterStatus = 'ready'
 end
 
 local function HandlePresence(player, joined)
@@ -560,6 +647,7 @@ local function HandlePresence(player, joined)
     else
         -- A client that left the bridge is no longer a valid sync target.
         presence[key] = nil
+        capabilityTags[key] = nil
         handshakeState[key] = nil
         handshakeQueued[key] = nil
     end
@@ -769,6 +857,7 @@ end
 -- than the raw whisper transport's - 140 raw chars comes to a little under
 -- 190 chars of base64, leaving room for the rest of the frame.
 local function Broadcast()
+    if passThrough then passThrough.Abort('manual-broadcast', 600) end
     if not GreenWallAPIAvailable() or not ns.ownTag then return end
     local snapshot = PrepareSnapshot(true)
     if not snapshot or #snapshot.rows == 0 then
@@ -787,11 +876,52 @@ local function Broadcast()
     if ns.RefreshFrame then ns.RefreshFrame() end
 end
 
+-- A channel broadcast cannot target one co-guild. Require a present TX1
+-- representative for EVERY configured remote guild; all other clients keep
+-- their existing manual/whisper compatibility path.
+local function PassThroughCapable()
+    local remote = 0
+    for tag in pairs(ns.peerNames) do
+        if tag ~= ns.ownTag then
+            remote = remote + 1
+            local found = false
+            for key, knownTag in pairs(capabilityTags) do
+                if knownTag == tag and presence[key] and ns.HasTransactionCapability
+                    and ns.HasTransactionCapability(presence[key]) then found = true; break end
+            end
+            if not found then return false end
+        end
+    end
+    return remote > 0
+end
+
+passThrough = ns.PassThrough.New({
+    owner = ADDON_NAME, now = GetTime, session = time, stats = ns.syncStats,
+    tag = function() return ns.ownTag end,
+    broker = function() return ns.HardwareAPI end,
+    enabled = function() return GreenWallGuildRosterDB and GreenWallGuildRosterDB.safePassThrough ~= false end,
+    capable = PassThroughCapable,
+    prepare = PrepareSnapshot, commit = CommitSnapshot, abort = AbortSnapshot,
+    valid = function(snapshot) return snapshot.baseRevision == snapshotRevision end,
+    completed = function()
+        GreenWallGuildRosterDB.lastBroadcast = time()
+        if ns.RefreshFrame then ns.RefreshFrame() end
+    end,
+})
+function ns.SetSafePassThrough(enabled)
+    GreenWallGuildRosterDB.safePassThrough = enabled and true or false
+    if not enabled then
+        passThrough.Abort('disabled')
+        if ns.ClearHardwareQueue then ns.ClearHardwareQueue() end
+    end
+end
+
 -- GreenWallAPI's handler contract doesn't pass the sender's actual co-guild
 -- tag/id through to third-party listeners (only "guild": whether it was
 -- our own) - so, same as before, we still self-report our own tag inside
 -- the message body and validate it against ns.peerNames on receipt.
 local function OnAPIMessage(addon, sender, message, echo, guild)
+    if echo then passThrough.Echo(message); return end
     -- echo (sent by us) implies guild (originated in our own co-guild), so
     -- checking guild alone also covers echo. Own-guild traffic - whether
     -- our own echoed broadcast or a guildmate also running this addon - is
@@ -799,9 +929,6 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
     -- from GetGuildRosterInfo.
     if guild then return end
     local tag, payload = message:match('^(%a+)#(.*)$')
-    if tag and ns.peerNames[tag] then
-        peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
-    end
     if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag]
         and payload:sub(1, 3) == 'T1|' then
         local status, result = transactionStager:Handle(tag, sender, payload, GetTime())
@@ -809,12 +936,14 @@ local function OnAPIMessage(addon, sender, message, echo, guild)
             ns.syncStats.staged = ns.syncStats.staged + 1
         elseif status == 'committed' then
             ns.syncStats.committed = ns.syncStats.committed + 1
+            peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
             MergePeerPayload(result.tag, result.payload, result.sender, 'broadcast')
         elseif status == 'rejected' then
             ns.syncStats.transactionRejected = ns.syncStats.transactionRejected + 1
         end
         return
     end
+    if tag and ns.peerNames[tag] then peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS end
     MergePeerPayload(tag, payload, sender, 'broadcast')
 end
 
@@ -839,6 +968,14 @@ local function OnAddonMessage(prefix, message, channel, sender)
         return
     end
     if channel ~= 'WHISPER' then return end
+    local claimedTag = message:match('^GWGR_HELLO#(%a+)#')
+        or message:match('^GWGR_ACK#(%a+)#') or message:match('^(%a+)#')
+    local senderKey = ClientKey(sender)
+    -- Tag/capability messages may arrive before the channel roster loads.
+    -- Remember the association; PassThroughCapable still requires presence.
+    if claimedTag and claimedTag ~= ns.ownTag and ns.peerNames[claimedTag] then
+        capabilityTags[senderKey] = claimedTag
+    end
 
     local helloTag, helloNonce = message:match('^' .. HELLO_PREFIX .. '(%a+)#(%d+)$')
     if helloTag then
@@ -949,6 +1086,7 @@ frame:SetScript('OnEvent', function(_, event, ...)
         -- the first load after updating, so they cannot reappear in a later
         -- version or inflate the saved-variable file indefinitely.
         GreenWallGuildRosterDB.whoSeen = nil
+        if GreenWallGuildRosterDB.safePassThrough == nil then GreenWallGuildRosterDB.safePassThrough = true end
         if GreenWallGuildRosterDB.pratIntegration == nil then
             GreenWallGuildRosterDB.pratIntegration = false
         end
@@ -1016,12 +1154,23 @@ end)
 local function ScheduleHandshakeService()
     C_Timer.After(math.random(HANDSHAKE_DISPATCH_INTERVAL - 5, HANDSHAKE_DISPATCH_INTERVAL + 5), function()
         ns.syncStats.expired = ns.syncStats.expired + transactionStager:Prune(GetTime())
+        -- Channel join and roster availability can lag behind the login scans.
+        -- Reconcile here even when no later guild or member-join event arrives.
+        RefreshChannelPresence()
         QueueDueHandshakes()
         ServiceHandshakeQueue()
         ScheduleHandshakeService()
     end)
 end
 ScheduleHandshakeService()
+
+local function SchedulePassThroughService()
+    C_Timer.After(5, function()
+        passThrough.Service() -- prepares/enqueues only; never sends protected chat
+        SchedulePassThroughService()
+    end)
+end
+SchedulePassThroughService()
 
 ns.Broadcast = Broadcast
 
@@ -1037,6 +1186,7 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
         print('  |cffffd200/gwgr broadcast|r - ' .. ns.L["/gwgr broadcast - send a full roster snapshot over GreenWall's confederation channel (GreenWallAPI)"])
         print('  |cffffd200/gwgr setmain <name>|r - ' .. ns.L["/gwgr setmain <name> - mark the character you're on as an alt of <name>; no name clears it"])
         print('  |cffffd200/gwgr status|r - ' .. ns.L['/gwgr status - show GreenWallAPI availability, own tag, and known confederation tags'])
+        print('  |cffffd200/gwgr passthrough on/off|r - ' .. ns.L['Use safe chat pass-through when available'])
         print('  |cffffd200/gwgr debug|r - ' .. ns.L['/gwgr debug - toggle addon-message RX/TX logging'])
         print('  |cffffd200/gwgr minimap|r - ' .. ns.L['/gwgr minimap - toggle the minimap button (also in Options > AddOns > GreenWall GuildRoster)'])
         print('  |cffffd200/gwgr exportzones|r - ' .. ns.L['/gwgr exportzones - export all known zone names for your client language, for building translation tables'])
@@ -1044,7 +1194,13 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
     elseif cmd == 'broadcast' then
         Broadcast()
         print('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Broadcast sent.'])
+    elseif cmd == 'passthrough' then
+        if rest == 'on' or rest == 'off' then ns.SetSafePassThrough(rest == 'on') end
+        print('GreenWallGuildRoster: pass-through=' .. tostring(GreenWallGuildRosterDB.safePassThrough) .. ' state=' .. passThrough.Status())
     elseif cmd == 'status' then
+        if ns.HardwareStatus then print('GreenWallGuildRoster: ' .. ns.HardwareStatus()) end
+        print(('GreenWallGuildRoster: channel-roster=%s number=%s index=%s count=%s'):format(
+            channelRosterStatus, tostring(channelRosterNumber), tostring(channelRosterIndex), tostring(channelRosterCount)))
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['GreenWallAPI=%s, own tag=%s']):format(
             tostring(GreenWallAPIAvailable()), tostring(ns.ownTag)))
         local peers = {}
@@ -1067,8 +1223,11 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
             stats.prepared, stats.staged, stats.committed, stats.aborted,
             stats.expired, stats.transactionRejected, transactionDepth,
             transactionBytes, stats.legacyFallback))
-        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Pass-through queued/submitted/echoed=%d/%d/%d (phase 1: send disabled)']):format(
+        print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Pass-through queued/submitted/echoed=%d/%d/%d']):format(
             stats.passThroughQueued, stats.passThroughSubmitted, stats.passThroughEchoed))
+        local state, index, total = passThrough.Status()
+        print(('GreenWallGuildRoster: pass-through=%s state=%s frame=%d/%d retries=%d'):format(
+            tostring(GreenWallGuildRosterDB.safePassThrough), state, index, total, stats.passThroughRetried or 0))
     elseif cmd == 'debug' then
         ns.debugAddonMsg = not ns.debugAddonMsg
         print(('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Addon message debug=%s']):format(tostring(ns.debugAddonMsg)))

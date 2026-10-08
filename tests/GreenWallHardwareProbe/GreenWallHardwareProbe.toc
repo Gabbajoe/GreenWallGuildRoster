@@ -1,0 +1,7 @@
+## Interface: 11509
+## Title: GreenWall Hardware Probe
+## Notes: Development-only, explicitly armed chat Enter permission probe.
+## Version: 0.1.0
+## Dependencies: GreenWall
+
+Probe.lua

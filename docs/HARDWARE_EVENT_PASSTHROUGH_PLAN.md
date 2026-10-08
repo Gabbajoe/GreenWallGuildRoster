@@ -1,7 +1,7 @@
 # Hardware-event pass-through plan
 
-Status: phase 1 implemented locally; live acceptance pending  
-Scope: GreenWallGuildRoster with optional GuildMap GreenWall integration
+Status: phase 1 released as 1.2.0; initial guild-chat spike passed on 2026-09-29; phase-2 sender complete for 1.3.0; Nils confirmed in-game testing and requested regular publication on 2026-10-09
+Scope: self-contained GreenWallGuildRoster sender; GreenWall is the only addon dependency
 
 ## Goal
 
@@ -34,33 +34,27 @@ does not replace the safe whisper transport.
 
 ## Architecture
 
-GuildMap GreenWall owns one optional shared broker, exposed through a versioned
-global API. A single owner prevents GreenWallGuildRoster and GuildMap GreenWall
-from installing competing hooks or both flushing large bursts from one key
-press.
+GreenWallGuildRoster owns its chat adapter and bounded queue internally.
+`Core/HardwareBroker.lua` supplies the queue, `Core/HardwareChat.lua` installs
+supported chat edit-box hooks, and `Core/PassThrough.lua` owns transaction
+framing, retries, echo correlation and snapshot commit. The queue interface
+is held in the private addon namespace; no global sender API is exposed.
+GuildMap GreenWall is not involved. There must be no shared queue, hooks,
+producer registration or cross-addon sender API between these addons. This
+independence was explicitly required on 2026-09-29.
 
-Proposed surface (names provisional):
+Queue rules:
 
-```lua
-GuildMapGreenWallHardwareAPI.VERSION = 1
-GuildMapGreenWallHardwareAPI.IsReady()
-GuildMapGreenWallHardwareAPI.Enqueue(ownerAddon, key, payload, options)
-GuildMapGreenWallHardwareAPI.Cancel(ownerAddon, key)
-GuildMapGreenWallHardwareAPI.Pending(ownerAddon)
-```
-
-Broker rules:
-
-- validate that `ownerAddon` is an installed TOC addon name;
-- keep bounded per-owner queues and a bounded global queue;
+- validate the sending addon ID against installed TOC names;
+- bound item count, payload bytes and lifetime;
 - deduplicate by `(ownerAddon, key)`;
 - expire stale work; never persist payloads across logout/reload;
-- use round-robin owner fairness;
-- submit at most one GreenWall frame per eligible user chat action;
-- call `GreenWallAPI.SendMessage(ownerAddon, payload)` synchronously;
-- guard against recursion while GreenWall sends the custom-channel frame;
-- report only `submitted`, not `delivered`; producer echo/ACK confirms delivery;
-- suspend immediately if the GreenWall guild-channel number becomes zero.
+- submit at most one frame per eligible user chat action;
+- call `GreenWallAPI.SendMessage` synchronously;
+- guard against recursion while GreenWall sends its frame;
+- treat submission as best effort; require producer echo for confirmation;
+- suspend on channel loss or combat lockdown, keeping frames out of
+  GreenWall's own deferred combat queue.
 
 Only a supported chat edit box `OnEnterPressed` post-hook is eligible. The
 broker must not flush from the global `SendChatMessage` hook, because that hook
@@ -115,7 +109,7 @@ Phase-1 acceptance:
 
 ### Phase 2: enable optional pass-through sending
 
-1. Detect broker API v1 and wait until `IsReady()` confirms GreenWall's actual
+1. Use the internal queue and wait until `IsReady()` confirms GreenWall's actual
    guild channel is joined.
 2. Prepare an initial full snapshot, but do not commit local sync bookkeeping.
 3. Enqueue one transaction frame at a time. Each genuine user chat send may
@@ -143,7 +137,7 @@ Phase-2 acceptance:
 - a multi-chunk snapshot advances by one frame per later user chat action;
 - silence leaves work queued without errors or stolen clicks;
 - channel loss pauses the queue and channel recovery resumes it;
-- manual Broadcast continues to work with broker absent or disabled;
+- manual Broadcast continues to work with the chat sender disabled;
 - mixed old/new GuildRoster clients converge through compatibility fallback.
 
 ## What pass-through does not change
@@ -158,12 +152,12 @@ Phase-2 acceptance:
 
 ## Test matrix
 
-Test each phase with: broker present/absent, GreenWall configured/unconfigured,
+Test each phase with: sender enabled/disabled, GreenWall configured/unconfigured,
 channel joined/late/failed/rejoined, solo/group/instance, quiet user, rapid chat,
 multiple producer queues, old/new GuildRoster peers, reload mid-transaction,
 duplicate/out-of-order/missing frames, and a 900+ member local roster.
 
-Capture `/gwgr status`, `/gmgw status`, BugGrabber output, queue high-water
+Capture `/gwgr status`, BugGrabber output, queue high-water
 marks, echo latency, transaction expiry and total GreenWall frames. A release
-candidate requires zero `ADDON_ACTION_BLOCKED` reports attributable to either
-companion addon.
+candidate requires zero `ADDON_ACTION_BLOCKED` reports attributable to
+GuildRoster.

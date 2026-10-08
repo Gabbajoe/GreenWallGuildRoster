@@ -27,7 +27,7 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - Shared freshness leases and payload deduplication prevent every local client from repeating the same cross-guild transfer
 - Automatic update notification learned from other GuildRoster clients; no web request or background downloader
 - A departed co-guild member (kicked, left, character deleted) gets explicitly cleared out instead of lingering as a stale entry forever
-- Atomic transaction receiving prepared for the optional safe-chat transport: incomplete or malformed multi-frame snapshots never alter the visible roster
+- Optional chat pass-through with atomic transactions: incomplete or malformed multi-frame snapshots never alter the visible roster
 - English/German UI, auto-detected from your client language - see [TRANSLATING.md](docs/TRANSLATING.md) to help add another
 
 ## Requirements
@@ -46,6 +46,7 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 - `/gwgr status` — show GreenWallAPI availability and your own tag
 - `/gwgr setmain <name>` — mark the character you're on as an alt of `<name>` (run this on the twink); leave the name off to clear it
 - `/gwgr minimap` — show or hide the minimap button
+- `/gwgr passthrough on|off` — enable or disable optional chat pass-through
 - `/gwgr debug` — toggle explicit addon-message logging for troubleshooting
 
 ## How it works
@@ -55,13 +56,20 @@ There are two transports, because Classic's client restricts what's available fo
 1. **Manual channel broadcast** (`Broadcast`): each client reads a full snapshot of its guild members currently reported online and sends it, chunked to fit message limits, via `GreenWallAPI.SendMessage` - GreenWall's own third-party API, which rides its already-joined confederation channel framed distinctly from GreenWall's own chat/notice/bridge traffic. This only ever runs from a direct click (button, minimap right-click, or `/gwgr broadcast`) — under the hood it still ends up at `SendChatMessage`, a protected function in this client build that gets silently blocked if called from a timer or event handler. This is how you make first contact with the other co-guild(s).
 2. **Presence-confirmed whisper sync**: GuildRoster reads the members currently present in GreenWall's normal guild bridge after login and observes later joins/leaves. Own-guild members are excluded because their roster is already available locally. It sends a small HELLO through a paced queue; only a client that answers is eligible for a full roster exchange. Each client releases at most one HELLO every 30 seconds and retries only clients that are still present after a cooldown. One confirmed exchange is fanned out at `BULK` priority to other GuildRoster users in that sender's own guild. That fan-out establishes a short shared freshness lease, so other local clients suppress redundant acknowledgements for the same peer guild. `/who` is not used at all: it neither discovers targets nor creates roster rows.
 
-Version 1.2.0 is phase 1 of the safe pass-through rollout. It can receive a
-bounded `BEGIN`/`DATA`/`COMMIT` transaction atomically and advertises that
-capability, but it does not automatically send one. Manual Broadcast retains
-the established legacy format and remains compatible with older clients. See
-the [two-phase plan](docs/HARDWARE_EVENT_PASSTHROUGH_PLAN.md).
+Version 1.3.0 includes its own transaction sender and chat queue.
+GreenWall is the only required addon. GuildRoster has no integration with
+GuildMap GreenWall and shares no sender, queue or hooks with it. It queues one frame at a time and waits
+for its matching own echo before advancing. Only the final echo commits the
+snapshot and updates the last-broadcast timestamp. Each configured remote
+guild must have a present, session-confirmed TX1 representative; quiet users,
+older peers and oversized snapshots retain the existing manual/whisper paths.
 
-So: click Broadcast once to introduce your guild to the other co-guild(s). After that, clients that appear on the GreenWall bridge can exchange a roster only after confirming that GuildRoster is present and reachable. The window shows how long ago your last manual broadcast was as a useful freshness indicator.
+The roster option is enabled by default and can be disabled with
+`/gwgr passthrough off`. No additional addon or activation command is needed. See the [sender test steps](docs/PHASE2_SENDER_TEST.md) and
+[two-phase plan](docs/HARDWARE_EVENT_PASSTHROUGH_PLAN.md).
+
+Manual Broadcast remains available for initial contact and immediate legacy
+snapshots. Presence-confirmed whisper sync continues independently.
 
 ### Keeping whisper traffic small
 
@@ -83,10 +91,11 @@ five ACKs sent, a normally empty queue, and zero send failures. See the
 
 ## Known limitations
 
-- Initial discovery still needs one user-triggered broadcast. After first contact, freshness depends on at least one reachable, current GuildRoster client in the source guild.
+- Transaction sending requires capability discovery through the existing presence/whisper exchange. Manual Broadcast remains available before discovery completes.
 - Remote full snapshots contain up to 200 members currently reported online. An offline remote row is retained after a previously known online member goes offline; this is not a complete export of every never-seen offline character in that guild.
 - A manual channel broadcast is synchronous and user-triggered. Automatic whisper and local-guild synchronization use ChatThrottleLib pacing.
-- Safe chat pass-through sending is deliberately disabled in 1.2.0 phase 1.
+- Phase 2 is available in 1.3.0; its sender option defaults on. It supports typed messages in standard guild/officer, party/raid, say/yell, whisper and instance chat edit boxes; custom channels, macros, empty Enter and slash commands do not qualify.
+- Transactions exceeding 32 data chunks or containing a row too large for the complete 120-byte frame budget use compatibility paths. Partial transactions expire after 120 seconds without a commit.
 - Built and tested against Classic Era (Interface 11509).
 
 ## License

@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.3.0
+
+**Optional chat pass-through — phase 2**
+- Share roster transactions through ordinary typed chat, one frame per Enter,
+  after discovering a present transaction-capable client in every co-guild.
+- Wait for each matching GreenWall echo; apply complete snapshots atomically
+  and update the last-broadcast timestamp only after the final confirmation.
+- Keep the sender queue internal to GuildRoster. GreenWall is the only addon
+  dependency; manual Broadcast and paced whisper sync remain available.
+- Enable the option by default, with an Options checkbox and
+  `/gwgr passthrough on|off` to control it.
+- Bound frame sizes, queue lifetime and retries. Timers, macros, empty Enter,
+  unrelated clicks and addon-generated messages do not drain the queue;
+  combat and an unavailable channel pause submission.
+- Discover late-joining channel members, correctly map chat numbers to display
+  indices, and request unloaded rosters without changing an open channel UI.
+- Extend `/gwgr status` with sender progress and channel-roster diagnostics.
+- Validate the sender, broker, chat adapter and runtime integration with local
+  Lua tests. Nils confirmed successful in-game testing for this release.
+
+## 1.3.0-dev.4
+
+- Request unloaded channel rosters by selecting the matching display entry
+  while the channel UI is closed. Re-read after four seconds and restore the
+  previous selection if the user and channel list have not changed it.
+- Bound acquisition attempts to one per 30 seconds, never change an open
+  channel window, and distinguish pending counts from empty lists.
+- The manual selection test on 2026-09-29 confirmed discovery of six members
+  and the first paced HELLO. Automatic request/restore still needs live testing.
+
+## 1.3.0-dev.3
+
+- Resolve GreenWall's chat number to the channel display-list index before
+  reading members. Read the member count from the matching display entry,
+  skipping headers and unrelated channels; re-resolve after list changes.
+- Keep confirmed presence while roster names are still loading. Replace it
+  only after a complete scan, or clear it when the bridge channel is lost.
+- Show channel number, display index and member count in `/gwgr status`.
+- Added regression coverage with distinct chat/display indices, list reordering,
+  pending names and peer departure, under legacy and namespaced roster APIs.
+
+## 1.3.0-dev.2
+
+- Support channel roster readers under `C_ChatInfo` as well as legacy global
+  functions. Preserve peer-tag associations received before the roster loads,
+  while still requiring current presence and TX1 capability before sending.
+- Show channel-roster scan status to distinguish unavailable APIs, an unjoined
+  channel and an empty member list.
+
+- Re-read GreenWall channel membership in the existing 25–35-second sync
+  service so late channel joins or delayed member lists do not leave discovery
+  empty until another guild event occurs.
+
+**Optional safe chat pass-through — phase 2 development build**
+- Added an echo-confirmed transaction sender through an internal
+  GuildRoster chat queue. GreenWall remains the only required addon. Only eligible typed chat Enter actions
+  submit a frame; timers only prepare or enqueue work.
+- Require a currently present, session-confirmed TX1 representative for every
+  configured remote guild before using the shared channel transaction format.
+- Bound complete API frames to 120 bytes, transactions to 32 data chunks and
+  120 seconds, and echo retries to two per frame. Oversized snapshots retain
+  the existing manual/whisper paths.
+- Cancel outdated snapshots after guild changes, concurrent sync commits,
+  manual Broadcast or disabling the option. Update last broadcast only after
+  all frames have been echoed and the snapshot commit succeeds.
+- Added an enabled-by-default roster option and `/gwgr passthrough on|off`.
+- Incomplete incoming transactions no longer renew the guild freshness lease.
+- Added sender, runtime and broker integration tests. The production adapter
+  and multi-client rollout still require live acceptance.
+
 ## 1.2.0
 
 **Safe pass-through preparation — phase 1 of 2**
