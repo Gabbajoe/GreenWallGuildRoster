@@ -19,9 +19,12 @@ jobs:
       - run: lua5.4 tests/pass_through_runtime_test.lua
       - run: lua5.4 tests/pass_through_runtime_test.lua --namespaced
       - run: lua5.4 tests/pass_through_runtime_test.lua --mixed
+      - run: lua5.4 tests/pass_through_runtime_test.lua --dotted
+      - run: lua5.4 tests/pass_through_runtime_test.lua --namespaced --dotted
       - run: lua5.4 tests/hardware_broker_test.lua
       - run: lua5.4 tests/hardware_chat_test.lua
       - run: lua5.4 tests/hardware_probe_test.lua
+      - run: lua5.4 tests/sync_button_test.lua
 
   release:
     needs: test

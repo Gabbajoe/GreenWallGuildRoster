@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.4.0
+
+- Fix synchronization with dotted guild tags such as `Comp.` and `Fel.` across
+  handshakes, whispers, broadcasts, guild fan-out and transactions. Both peers
+  need the update to recognize dotted tags.
+- Add an optional sync button showing remaining clicks, pending confirmation
+  and transaction time. Right-drag works even while sending is unavailable;
+  its position is saved per character and it stacks like a normal window.
+- Hide the Alt column by default, giving guild names more room. Enable it in
+  AddOn settings when needed; layout changes apply immediately.
+- Fit long roster values to their column widths. Only truncated guild names
+  show a cursor tooltip, with the character name in class color.
+- Open settings with Shift-right-click on the minimap button; list all three
+  click actions in its English/German tooltip.
+- Include optional action-bar/world-click experiments via `/gwgr clicktest`.
+  These remain off after login/reload and require live testing. Combat pauses
+  sending; protected-action/send errors stop the experimental sources.
+- Add `/gwgr syncrestart` to prepare a fresh test snapshot without sending.
+- Expand automated coverage for dotted tags, input sources, click progress,
+  button movement and saved-position restoration.
+
+## 1.4.0-dev.2
+
+- Accept dotted guild tags such as `Comp.` and `Fel.` in HELLO/ACK,
+  whisper sync, guild fan-out, legacy broadcasts and transaction sending/receiving.
+- Fit roster text to measured column widths and show full guild names in row
+  tooltips, preventing long names from wrapping into subsequent rows.
+- Add dotted-tag regression coverage across the runtime sync paths.
+
+## 1.4.0-dev.1
+
+- Add an optional movable sync button with remaining clicks, pending-echo state
+  and transaction lifetime. Enable through Options or `/gwgr syncbutton on`.
+- Add session-only `/gwgr clicktest action|world|all|off|status` experiments for
+  standard action-bar PostClick and WorldFrame OnMouseUp callbacks.
+- Keep all sends synchronous, pause in combat, deduplicate overlapping hooks,
+  and stop experimental sources after a send/protected-action error.
+- Report submissions, matching echoes and caught send errors per source.
+- Add `/gwgr syncrestart` to prepare a fresh test transaction without sending.
+- Cover progress, retries, source isolation, combat, errors and button display
+  with Lua tests. Additional input paths require live hardware-permission tests.
+
 ## 1.3.0
 
 **Optional chat pass-through — phase 2**

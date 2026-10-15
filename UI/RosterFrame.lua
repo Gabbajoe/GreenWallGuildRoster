@@ -54,7 +54,7 @@ end
 -- learned the hard way once already with mainLinks). Branching on the
 -- setting here always saw a stale/default value and silently built the
 -- wrong layout every time. Instead, the column always exists structurally
--- (Alt is always the narrower 100px to make room for it), and
+-- (Alt reserves 100px when enabled), and
 -- UpdateHeaderText/Refresh below - which only ever run in response to a
 -- real event, always safely after data has loaded - decide whether to
 -- actually show its header/content or leave it blank.
@@ -118,7 +118,7 @@ headerDivider:SetHeight(8)
 headerDivider:SetPoint('TOPLEFT', headerRow, 'BOTTOMLEFT', -2, 2)
 headerDivider:SetPoint('TOPRIGHT', headerRow, 'BOTTOMRIGHT', 2, 2)
 
-local headerFS = {}
+local headerFS, headerButtons = {}, {}
 for i, h in ipairs(headers) do
     local fs = headerRow:CreateFontString(nil, 'OVERLAY', 'GameFontNormal')
     fs:SetPoint('LEFT', colX[i], 0)
@@ -128,6 +128,7 @@ for i, h in ipairs(headers) do
     local btn = CreateFrame('Button', nil, headerRow)
     btn:SetPoint('TOPLEFT', colX[i], 0)
     btn:SetSize((colX[i + 1] or CONTENT_WIDTH) - colX[i], 16)
+    headerButtons[i] = btn
     btn:SetScript('OnClick', function()
         if sortColumn == i then
             sortAsc = not sortAsc
@@ -145,7 +146,8 @@ local function UpdateHeaderText()
         -- SavedVariables value is known safe to read (see the comment
         -- where headers/colX are built) - blank otherwise, same as its
         -- body text in Refresh below.
-        if i == 8 and not GreenWallGuildRosterDB.showSourceColumn then
+        if (i == 8 and not GreenWallGuildRosterDB.showSourceColumn)
+            or (i == 7 and not GreenWallGuildRosterDB.showAltColumn) then
             headerFS[i]:SetText('')
         else
             headerFS[i]:SetText(h .. (i == sortColumn and (sortAsc and ' ^' or ' v') or ''))
@@ -180,22 +182,57 @@ for i in ipairs(headers) do
     columnFS[i] = fs
 end
 
+-- Apply saved column visibility on refresh, after SavedVariables are loaded.
+-- Hiding Alt gives its full 100px to Guild; Status moves to the right.
+local function UpdateColumnLayout()
+    local showAlt = GreenWallGuildRosterDB.showAltColumn == true
+    colX[6], colX[7] = showAlt and 470 or 570, showAlt and 520 or 620
+    if not showAlt and sortColumn == 7 then sortColumn, sortAsc = 1, false end
+    for i in ipairs(headers) do
+        local visible = (i ~= 7 or showAlt)
+            and (i ~= 8 or GreenWallGuildRosterDB.showSourceColumn == true)
+        local width = math.max(1, (colX[i + 1] or CONTENT_WIDTH) - colX[i])
+        headerFS[i]:ClearAllPoints()
+        headerFS[i]:SetPoint('LEFT', colX[i], 0)
+        headerButtons[i]:ClearAllPoints()
+        headerButtons[i]:SetPoint('TOPLEFT', colX[i], 0)
+        headerButtons[i]:SetWidth(width)
+        headerButtons[i]:SetShown(visible)
+        columnFS[i]:ClearAllPoints()
+        columnFS[i]:SetPoint('TOPLEFT', colX[i], 0)
+        columnFS[i]:SetWidth(math.max(1, width - 6))
+        columnFS[i]:SetShown(visible)
+    end
+end
+
 -- Word wrap has to stay on so the \n-joined multi-line column text keeps
 -- working (SetWordWrap(false) turns out to truncate the whole block after
 -- the first line instead of per-line). To stop long fields from wrapping
 -- to a second line and throwing off row alignment between columns, clip
 -- the raw value ourselves before it ever reaches the FontString.
--- Byte-length based (names/zones here can contain multi-byte UTF-8 like
--- umlauts), so back off from the cut point until it doesn't land in the
--- middle of a multi-byte sequence.
-local function Clip(s, maxChars)
-    s = s or ''
-    if #s <= maxChars then return s end
-    local cut = maxChars - 2
-    while cut > 1 and s:byte(cut) >= 0x80 and s:byte(cut) < 0xC0 do
-        cut = cut - 1
+-- Measure with the actual column font: character counts cannot predict the
+-- width of proportional text (e.g. "Companions Of The Forge"). Keep a small
+-- margin so rounding cannot wrap a fitted value into the next roster row.
+local textMeasure = content:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightSmall')
+textMeasure:SetWordWrap(false)
+textMeasure:Hide()
+local function Clip(s, column)
+    s = (s or ''):gsub('[\r\n]', ' ')
+    textMeasure:SetFontObject(columnFS[column]:GetFontObject())
+    local width = math.max(0, columnFS[column]:GetWidth() - 2)
+    textMeasure:SetText(s)
+    if textMeasure:GetStringWidth() <= width then return s end
+    while #s > 0 do
+        -- Remove a complete UTF-8 code point, never half an umlaut.
+        local cut = #s
+        while cut > 1 and s:byte(cut) >= 0x80 and s:byte(cut) < 0xC0 do
+            cut = cut - 1
+        end
+        s = s:sub(1, cut - 1)
+        textMeasure:SetText(s .. '..')
+        if textMeasure:GetStringWidth() <= width then return s .. '..' end
     end
-    return s:sub(1, cut) .. '..'
+    return ''
 end
 
 -- One invisible click-catcher Button per row, parented to the scroll
@@ -365,6 +402,18 @@ local function GetRowButton(i)
         btn:SetPoint('TOPRIGHT', content, 'TOPLEFT', CONTENT_WIDTH, -(i - 1) * ROW_HEIGHT + LINE_SPACING / 2)
         btn:RegisterForClicks('RightButtonUp')
         btn:SetScript('OnClick', ShowRowMenu)
+        btn:SetScript('OnEnter', function(self)
+            if not self.guildName or not self.guildNameClipped then return end
+            local color = (CLASS_COLORS and self.classFile and CLASS_COLORS[self.classFile]) or NORMAL_FONT_COLOR
+            GameTooltip:SetOwner(self, 'ANCHOR_CURSOR')
+            GameTooltip:SetText(self.targetName or '', color.r, color.g, color.b)
+            GameTooltip:AddLine(self.guildName, 1, 0.82, 0, true)
+            GameTooltip:Show()
+        end)
+        btn:SetScript('OnLeave', function() GameTooltip:Hide() end)
+        btn:SetScript('OnHide', function(self)
+            if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        end)
         -- Same texture the native guild/quest list rows use for their
         -- mouseover highlight, now spanning the full row width instead of
         -- just the Name column.
@@ -570,6 +619,7 @@ local function BuildEntries()
 end
 
 local function Refresh()
+    UpdateColumnLayout()
     UpdateHeaderText()
     UpdateLastBroadcastLabel()
     local list = BuildEntries()
@@ -607,13 +657,15 @@ local function Refresh()
         end
 
         col[1][#col[1] + 1] = tostring(entry.level or '?')
-        col[3][#col[3] + 1] = ('|cff%s%s|r'):format(hex, Clip(entry.name or '?', 22))
-        col[4][#col[4] + 1] = Clip(entry.zone or '', 30)
+        col[3][#col[3] + 1] = ('|cff%s%s|r'):format(hex, Clip(entry.name or '?', 3))
+        col[4][#col[4] + 1] = Clip(entry.zone or '', 4)
         local guildHex = GuildHexFor(entry.guild)
-        col[5][#col[5] + 1] = ('|cff%s%s|r'):format(guildHex, Clip(entry.guild or '?', 15))
+        local guildText = Clip(entry.guild or '?', 5)
+        entry.guildNameClipped = guildText ~= (entry.guild or '?')
+        col[5][#col[5] + 1] = ('|cff%s%s|r'):format(guildHex, guildText)
         col[6][#col[6] + 1] = status
-        if entry.linkedMain and entry.linkedMain ~= '' then
-            col[7][#col[7] + 1] = ('|cff888888%s|r'):format(Clip(entry.linkedMain, 22))
+        if GreenWallGuildRosterDB.showAltColumn and entry.linkedMain and entry.linkedMain ~= '' then
+            col[7][#col[7] + 1] = ('|cff888888%s|r'):format(Clip(entry.linkedMain, 7))
         else
             col[7][#col[7] + 1] = ''
         end
@@ -665,6 +717,10 @@ local function Refresh()
             local btn = GetRowButton(i)
             btn:SetPoint('TOPLEFT', 0, -(i - 1) * ROW_HEIGHT + LINE_SPACING / 2)
             btn.targetName = entry.name
+            btn.guildName = entry.guild
+            btn.guildNameClipped = entry.guildNameClipped
+            if not btn.guildNameClipped and GameTooltip:IsOwned(btn) then GameTooltip:Hide() end
+            btn.classFile = entry.classFile
             btn:Show()
 
             local iconTex = GetClassIcon(i)

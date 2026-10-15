@@ -908,6 +908,8 @@ passThrough = ns.PassThrough.New({
         if ns.RefreshFrame then ns.RefreshFrame() end
     end,
 })
+function ns.GetSyncProgress() return passThrough.Progress() end
+function ns.PrepareHardwareSync() passThrough.Service() end
 function ns.SetSafePassThrough(enabled)
     GreenWallGuildRosterDB.safePassThrough = enabled and true or false
     if not enabled then
@@ -921,14 +923,17 @@ end
 -- our own) - so, same as before, we still self-report our own tag inside
 -- the message body and validate it against ns.peerNames on receipt.
 local function OnAPIMessage(addon, sender, message, echo, guild)
-    if echo then passThrough.Echo(message); return end
+    if echo then
+        if passThrough.Echo(message) and ns.HardwareEcho then ns.HardwareEcho(message) end
+        return
+    end
     -- echo (sent by us) implies guild (originated in our own co-guild), so
     -- checking guild alone also covers echo. Own-guild traffic - whether
     -- our own echoed broadcast or a guildmate also running this addon - is
     -- pure noise here: we already have that data directly and completely
     -- from GetGuildRosterInfo.
     if guild then return end
-    local tag, payload = message:match('^(%a+)#(.*)$')
+    local tag, payload = message:match('^([%a%.]+)#(.*)$')
     if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag]
         and payload:sub(1, 3) == 'T1|' then
         local status, result = transactionStager:Handle(tag, sender, payload, GetTime())
@@ -959,7 +964,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
     end
     if ns.HandleVersionMessage and ns.HandleVersionMessage(message, channel, sender) then return end
     if channel == 'GUILD' then
-        local tag, payload = message:match('^' .. LOCAL_GUILD_PREFIX .. '(%a+)#(.*)$')
+        local tag, payload = message:match('^' .. LOCAL_GUILD_PREFIX .. '([%a%.]+)#(.*)$')
         if tag and payload then
             peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
             ns.MarkRecent(recentPayloads, tag .. '#' .. payload, GetTime(), PAYLOAD_DEDUP_SECONDS)
@@ -968,8 +973,8 @@ local function OnAddonMessage(prefix, message, channel, sender)
         return
     end
     if channel ~= 'WHISPER' then return end
-    local claimedTag = message:match('^GWGR_HELLO#(%a+)#')
-        or message:match('^GWGR_ACK#(%a+)#') or message:match('^(%a+)#')
+    local claimedTag = message:match('^GWGR_HELLO#([%a%.]+)#')
+        or message:match('^GWGR_ACK#([%a%.]+)#') or message:match('^([%a%.]+)#')
     local senderKey = ClientKey(sender)
     -- Tag/capability messages may arrive before the channel roster loads.
     -- Remember the association; PassThroughCapable still requires presence.
@@ -977,7 +982,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
         capabilityTags[senderKey] = claimedTag
     end
 
-    local helloTag, helloNonce = message:match('^' .. HELLO_PREFIX .. '(%a+)#(%d+)$')
+    local helloTag, helloNonce = message:match('^' .. HELLO_PREFIX .. '([%a%.]+)#(%d+)$')
     if helloTag then
         -- One acknowledged sender per co-guild is sufficient: received
         -- chunks are fanned out to the sender's own guild through the safe
@@ -997,7 +1002,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
         return
     end
 
-    local ackTag, ackNonce = message:match('^' .. ACK_PREFIX .. '(%a+)#(%d+)$')
+    local ackTag, ackNonce = message:match('^' .. ACK_PREFIX .. '([%a%.]+)#(%d+)$')
     if ackTag then
         local pending = handshakeState[ClientKey(sender)]
         if pending and pending.nonce == ackNonce and ackTag ~= ns.ownTag and ns.peerNames[ackTag] then
@@ -1015,7 +1020,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
         return
     end
 
-    local tag, payload = message:match('^(%a+)#(.*)$')
+    local tag, payload = message:match('^([%a%.]+)#(.*)$')
     if tag and payload and tag ~= ns.ownTag and ns.peerNames[tag] then
         peerFreshUntil[tag] = GetTime() + SYNC_COOLDOWN_SECONDS
     end
@@ -1186,6 +1191,7 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
         print('  |cffffd200/gwgr broadcast|r - ' .. ns.L["/gwgr broadcast - send a full roster snapshot over GreenWall's confederation channel (GreenWallAPI)"])
         print('  |cffffd200/gwgr setmain <name>|r - ' .. ns.L["/gwgr setmain <name> - mark the character you're on as an alt of <name>; no name clears it"])
         print('  |cffffd200/gwgr status|r - ' .. ns.L['/gwgr status - show GreenWallAPI availability, own tag, and known confederation tags'])
+        print('  /gwgr syncrestart; /gwgr syncbutton on|off; /gwgr clicktest off|action|world|all|status')
         print('  |cffffd200/gwgr passthrough on/off|r - ' .. ns.L['Use safe chat pass-through when available'])
         print('  |cffffd200/gwgr debug|r - ' .. ns.L['/gwgr debug - toggle addon-message RX/TX logging'])
         print('  |cffffd200/gwgr minimap|r - ' .. ns.L['/gwgr minimap - toggle the minimap button (also in Options > AddOns > GreenWall GuildRoster)'])
@@ -1197,6 +1203,13 @@ SlashCmdList['GWGROSTER'] = function(rawMsg)
     elseif cmd == 'passthrough' then
         if rest == 'on' or rest == 'off' then ns.SetSafePassThrough(rest == 'on') end
         print('GreenWallGuildRoster: pass-through=' .. tostring(GreenWallGuildRosterDB.safePassThrough) .. ' state=' .. passThrough.Status())
+    elseif cmd == 'syncrestart' then
+        passThrough.Abort('idle')
+        passThrough.Service() -- prepare only; the command never sends
+    elseif cmd == 'syncbutton' then
+        if ns.SetSyncButtonShown then ns.SetSyncButtonShown(rest ~= 'off') end
+    elseif cmd == 'clicktest' then
+        if ns.SetClickTest then ns.SetClickTest(rest) end
     elseif cmd == 'status' then
         if ns.HardwareStatus then print('GreenWallGuildRoster: ' .. ns.HardwareStatus()) end
         print(('GreenWallGuildRoster: channel-roster=%s number=%s index=%s count=%s'):format(

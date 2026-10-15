@@ -39,6 +39,16 @@ GreenWall bridges guild chat between co-guilds, but each guild's roster is still
 1. Copy the `GreenWallGuildRoster` folder into your `Interface/AddOns/` directory.
 2. `/reload`. No guild-info configuration needed beyond GreenWall's own setup.
 
+## New in 1.4
+
+Version 1.4.0 fixes dotted guild tags and adds an optional movable sync button
+with remaining clicks (`/gwgr syncbutton on`). Right-drag to move it; its position
+is saved per character. The Alt column defaults off to make more room for guild
+names; enable it in settings. Shift-right-click the minimap button opens settings.
+Action/world click tests remain optional and disabled by default.
+See [the live test guide](docs/CLICK_TEST_1.4.md). Experimental input sources
+reset to off on reload; the normal chat path remains available.
+
 ## Usage
 
 - `/gwgr` — open/close the roster window

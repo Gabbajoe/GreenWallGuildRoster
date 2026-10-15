@@ -9,6 +9,8 @@ local L = setmetatable({}, { __index = function(t, k) return k end })
 ns.L = L
 
 if GetLocale() == 'deDE' then
+    L['Shift-right-click: open settings'] = 'Shift-Rechtsklick: Einstellungen öffnen'
+    L['Show Alt column (uses guild-name space)'] = 'Alt-Spalte anzeigen (verkleinert die Gildenspalte)'
     -- Window / headers
     L['GreenWall GuildRoster'] = 'GreenWall Gildenroster'
     L['Class'] = 'Klasse'

@@ -82,7 +82,7 @@ function PassThrough.New(env)
         if not broker.IsReady() then self.state = 'waiting-channel-or-broker'; return end
         if not env.capable() then self.state = 'waiting-capability'; return end
         local tag = env.tag()
-        if not tag or not tag:match('^%a+$') or #tag > 16 then self.state = 'waiting-tag'; return end
+        if not tag or not tag:match('^[%a%.]+$') or #tag > 16 then self.state = 'waiting-tag'; return end
         local snapshot = env.prepare(true)
         if not snapshot then self.state = 'waiting-roster'; return end
         serial = serial + 1
@@ -133,6 +133,13 @@ function PassThrough.New(env)
             else self.Abort('invalidated', 30) end
         else enqueue() end
         return true
+    end
+    function self.Progress()
+        local remaining = active and (#active.frames - active.index + 1) or 0
+        local waiting = active and active.waiting or false
+        return { state = self.state, remaining = math.max(0, remaining - (waiting and 1 or 0)),
+            waiting = waiting, total = active and #active.frames or 0,
+            seconds = active and math.max(0, math.ceil(active.expiresAt - env.now())) or 0 }
     end
     function self.Status()
         return self.state, active and active.index or 0, active and #active.frames or 0

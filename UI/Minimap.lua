@@ -92,9 +92,12 @@ button:SetScript('OnDragStop', function(self)
     if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
 end)
 
+local category
 button:SetScript('OnClick', function(self, mouseButton)
     if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
-    if mouseButton == 'RightButton' then
+    if mouseButton == 'RightButton' and IsShiftKeyDown() then
+        if category then Settings.OpenToCategory(category:GetID()) end
+    elseif mouseButton == 'RightButton' then
         if ns.Broadcast then
             ns.Broadcast()
             print('|cff33ff99GreenWallGuildRoster|r: ' .. ns.L['Broadcast sent.'])
@@ -109,6 +112,7 @@ button:SetScript('OnEnter', function(self)
     GameTooltip:SetText(ns.L['GreenWall GuildRoster'])
     GameTooltip:AddLine(ns.L['Left-click: open/close window'], 1, 1, 1)
     GameTooltip:AddLine(ns.L['Right-click: send broadcast'], 1, 1, 1)
+    GameTooltip:AddLine(ns.L['Shift-right-click: open settings'], 1, 1, 1)
     local last = GreenWallGuildRosterDB.lastBroadcast
     if last then
         local mins = math.floor((time() - last) / 60)
@@ -174,12 +178,30 @@ passThroughCB:SetScript('OnClick', function(self)
     ns.SetSafePassThrough(self:GetChecked() and true or false)
 end)
 
+local syncButtonCB = CreateFrame('CheckButton', 'GreenWallGuildRosterSyncButtonCB', optionsFrame, 'UICheckButtonTemplate')
+syncButtonCB:SetPoint('TOPLEFT', passThroughCB, 'BOTTOMLEFT', 0, -8)
+_G[syncButtonCB:GetName() .. 'Text']:SetText(GetLocale() == 'deDE' and
+    'Sync-Button mit verbleibenden Klicks anzeigen' or 'Show sync button with remaining clicks')
+syncButtonCB:SetScript('OnClick', function(self)
+    ns.SetSyncButtonShown(self:GetChecked() and true or false)
+end)
+
+local altColumnCB = CreateFrame('CheckButton', 'GreenWallGuildRosterAltColumnCB', optionsFrame, 'UICheckButtonTemplate')
+altColumnCB:SetPoint('TOPLEFT', syncButtonCB, 'BOTTOMLEFT', 0, -8)
+_G[altColumnCB:GetName() .. 'Text']:SetText(ns.L['Show Alt column (uses guild-name space)'])
+altColumnCB:SetScript('OnClick', function(self)
+    GreenWallGuildRosterDB.showAltColumn = self:GetChecked() and true or false
+    if ns.RefreshFrame then ns.RefreshFrame() end
+end)
+
 optionsFrame:SetScript('OnShow', function()
+    altColumnCB:SetChecked(GreenWallGuildRosterDB.showAltColumn == true)
+    syncButtonCB:SetChecked(GreenWallGuildRosterDB.showSyncButton and true or false)
     passThroughCB:SetChecked(GreenWallGuildRosterDB.safePassThrough ~= false)
     minimapCB:SetChecked(not GreenWallGuildRosterDB.minimapHidden)
     sourceColumnCB:SetChecked(GreenWallGuildRosterDB.showSourceColumn)
     pratIntegrationCB:SetChecked(GreenWallGuildRosterDB.pratIntegration)
 end)
 
-local category = Settings.RegisterCanvasLayoutCategory(optionsFrame, optionsFrame.name)
+category = Settings.RegisterCanvasLayoutCategory(optionsFrame, optionsFrame.name)
 Settings.RegisterAddOnCategory(category)

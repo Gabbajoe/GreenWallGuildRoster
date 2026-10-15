@@ -95,3 +95,24 @@ f = fixture(); f.autoEcho = true; f.sender.Service(); f.broker.OnChatEnter()
 assert(#f.sent == 1 and f.broker.Pending() == 1 and f.committed == 0)
 f.sender.Abort('manual-broadcast', 600); assert(f.broker.Pending() == 0)
 print('Pass-through: round trip, echo, retries, expiry, invalidation, bounds and fallback passed.')
+
+-- UI counts future clicks separately from the outstanding echo.
+f = fixture(); f.sender.Service()
+local p = f.sender.Progress()
+assert(p.remaining == p.total and p.remaining > 2 and not p.waiting and p.seconds == 120)
+local total = p.total
+f.broker.OnChatEnter(); p = f.sender.Progress()
+assert(p.waiting and p.remaining == total - 1)
+f.now = f.now + 16; f.sender.Service(); p = f.sender.Progress()
+assert(not p.waiting and p.remaining == total, 'retry must count as another click')
+f.sender.Echo(f.sent[1]); p = f.sender.Progress()
+assert(not p.waiting and p.remaining == total - 1)
+while f.completed == 0 do
+    f.broker.OnChatEnter()
+    p = f.sender.Progress()
+    if p.remaining == 0 then assert(p.waiting and f.completed == 0, 'final echo still needed') end
+    f.sender.Echo(f.sent[#f.sent])
+end
+p = f.sender.Progress()
+assert(p.state == 'complete' and p.remaining == 0 and not p.waiting)
+print('Progress: queued clicks, pending echo, retries and final confirmation passed.')

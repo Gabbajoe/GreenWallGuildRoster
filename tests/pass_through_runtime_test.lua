@@ -1,5 +1,8 @@
 -- Exercise real Core + Versioning wiring, including capability/session gates.
 local root = (arg[0]:match('(.*[/\\])') or './') .. '../'
+local dotted = arg[2] == '--dotted' or arg[1] == '--dotted'
+local ownTag, peerTag = dotted and 'Comp.' or 'A', dotted and 'Fel.' or 'B'
+local controls = {}
 local now, frames, timers, apiHandler, sent, queued = 100, {}, {}, nil, {}, nil
 local channel, channelMembers = 0, {}
 local displayIndex, namesPending, countReady = 3, false, false
@@ -34,7 +37,7 @@ strsplit = function(separator, value)
 end
 local guild = 'LocalGuild'
 GetGuildInfo = function() return guild end
-GetGuildInfoText = function() return 'GW:p:LocalGuild:A\nGW:p:PeerGuild:B' end
+GetGuildInfoText = function() return 'GW:p:LocalGuild:' .. ownTag .. '\nGW:p:PeerGuild:' .. peerTag end
 GetNumGuildMembers = function() return 1 end
 GetGuildRosterInfo = function() return 'Alice', '', 0, 60, 'Mage', 'Stormwind', '', '', true, '', 'MAGE' end
 UnitName = function() return 'Alice' end
@@ -48,7 +51,7 @@ if arg[1] == '--namespaced' or arg[1] == '--mixed' then
         C_ChatInfo.GetNumChannelMembers, GetNumChannelMembers = GetNumChannelMembers, nil
     end
 end
-ChatThrottleLib = { SendAddonMessage = function() end }
+ChatThrottleLib = { SendAddonMessage = function(_, _, _, message) controls[#controls + 1] = message end }
 C_Timer = { After = function(delay, fn) timers[#timers + 1] = { delay, fn } end }
 CreateFrame = function()
     local f = { events = {}, RegisterEvent = function(self, e) self.events[e] = true end,
@@ -111,7 +114,8 @@ service(); assert(not queued and #sent == 0)
 handshakeService(); assert(ns.syncStats.helloTX == 0)
 channel = 1
 handshakeService(); assert(ns.syncStats.helloTX == 0, 'empty roster guessed a peer')
-msg('GWGR_HELLO#B#123') -- association arrives BEFORE channel presence
+msg('GWGR_HELLO#' .. peerTag .. '#123') -- association arrives BEFORE channel presence
+assert(ns.syncStats.ackTX == 1, 'HELLO tag was not recognized')
 assert(selected == displayIndex and #selections == 1, 'missing count did not request roster')
 handshakeService(); assert(#selections == 1, 'inflight request repeated')
 countReady = true
@@ -120,6 +124,17 @@ finishRequest()
 assert(selected == 2 and #selections == 2, 'previous channel selection not restored')
 handshakeService()
 assert(ns.syncStats.helloTX == 1 and #sent == 0, 'late channel roster not discovered')
+local nonce
+for _, message in ipairs(controls) do
+    nonce = message:match('^GWGR_HELLO#[^#]+#(%d+)$') or nonce
+end
+assert(nonce)
+local timerCount = #timers
+msg('GWGR_ACK#' .. peerTag .. '#' .. nonce)
+assert(#timers == timerCount + 1, 'ACK did not schedule roster transfer')
+-- Isolate this scheduled transfer from the delay-based service helpers below:
+-- its randomized 3-8s delay can overlap the 4s roster or 5s sender service.
+table.remove(timers, timerCount + 1)
 -- A moved display index must be resolved again on the next scan.
 displayIndex = 4
 handshakeService()
@@ -176,3 +191,32 @@ finishRequest(); assert(selected == displayIndex, 'selection changed while chann
 channelWindowOpen = false
 handshakeService(); assert(#sent == messageCount, 'roster request sent protected chat')
 print('Pass-through runtime: fresh capabilities, own echo dispatch, commit, toggle, guild reset and manual fallback passed.')
+
+ns.HardwareAPI = testHardwareAPI
+countReady = true
+handshakeService()
+msg('GWGR_HELLO#' .. peerTag .. '#12345'); msg('GWGR_CAPS#TX1')
+local beforeRestart = #sent
+SlashCmdList.GWGROSTER('syncrestart')
+assert(#sent == beforeRestart, 'restart command sent protected chat')
+assert(ns.GetSyncProgress().total > 0, 'restart did not prepare transaction')
+local echoes = 0
+ns.HardwareEcho = function() echoes = echoes + 1 end
+sendEcho()
+assert(echoes == 1, 'accepted echo did not reach source diagnostics')
+print('Runtime: restart prepares without sending and accepted echo reaches input diagnostics.')
+
+local function row(name) return name .. ';MAGE;60;Stormwind;;1;;0' end
+apiHandler('GreenWallGuildRoster', 'Bob', peerTag .. '#' .. row('Legacy'), false, false)
+assert(GreenWallGuildRosterDB.peers[peerTag].Legacy, 'legacy broadcast tag rejected')
+msg(peerTag .. '#' .. row('Whisper'))
+assert(GreenWallGuildRosterDB.peers[peerTag].Whisper, 'whisper tag rejected')
+event('CHAT_MSG_ADDON', 'GWGRoster', 'GWGR_LOCAL#' .. peerTag .. '#' .. row('Fanout'), 'GUILD', 'Alice')
+assert(GreenWallGuildRosterDB.peers[peerTag].Fanout, 'local fan-out tag rejected')
+local protocol = ns.TransactionProtocol
+for _, payload in ipairs({ protocol.EncodeBegin('tagtest', 'full', 1),
+    protocol.EncodeData('tagtest', 1, row('Transaction')), protocol.EncodeCommit('tagtest') }) do
+    apiHandler('GreenWallGuildRoster', 'Bob', peerTag .. '#' .. payload, false, false)
+end
+assert(GreenWallGuildRosterDB.peers[peerTag].Transaction, 'transaction tag rejected')
+print('Tag compatibility (' .. ownTag .. '/' .. peerTag .. '): HELLO, ACK, sender, legacy, whisper, fan-out and transaction passed.')

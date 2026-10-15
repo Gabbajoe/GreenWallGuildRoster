@@ -77,3 +77,61 @@ GreenWallGuildRosterDB.safePassThrough = false
 addon.ClearHardwareQueue()
 assert(api.Pending() == 0 and not api.IsReady())
 print('Hardware chat: supported hooks, typed eligibility, exclusions and toggle passed.')
+
+-- Explicit button and opt-in source isolation, without replacing original scripts.
+GreenWallGuildRosterDB.safePassThrough = true
+local function clickObject()
+    local obj = { hooks = {} }
+    function obj:HasScript() return true end
+    function obj:HookScript(event, fn) assert(not self.hooks[event]); self.hooks[event] = fn end
+    function obj:RegisterForClicks() end
+    function obj:SetScript(event, fn) self.hooks[event] = fn end
+    return obj
+end
+ActionButton1, WorldFrame = clickObject(), clickObject()
+local sync = clickObject()
+addon.BindSyncButton(sync)
+local function queue()
+    now = now + 1
+    assert(api.Enqueue('Producer', 'key', 'frame'))
+end
+queue()
+local before = sends
+sync.hooks.OnClick(sync, 'RightButton'); assert(sends == before)
+sync.hooks.OnClick(sync, 'LeftButton'); assert(sends == before + 1)
+queue()
+addon.SetClickTest('action')
+assert(sends == before + 1, 'arming sent a frame')
+ActionButton1.hooks.PostClick(ActionButton1, 'LeftButton', true)
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'LeftButton')
+assert(sends == before + 1, 'down or disabled source sent')
+ActionButton1.hooks.PostClick(ActionButton1, 'LeftButton', false)
+assert(sends == before + 2)
+assert(api.Enqueue('Producer', 'key', 'frame'))
+addon.SetClickTest('all')
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'LeftButton')
+assert(sends == before + 2, 'overlapping callback sent twice')
+now = now + 1; combat = true
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'RightButton')
+assert(sends == before + 2 and api.Pending() == 1)
+combat = false
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'RightButton')
+assert(sends == before + 3)
+queue()
+frame.event(nil, 'ADDON_ACTION_BLOCKED', 'GreenWall')
+ActionButton1.hooks.PostClick(ActionButton1, 'LeftButton', false)
+assert(sends == before + 3, 'blocked action did not stop experiment')
+addon.SetClickTest('world')
+local originalSend = GreenWallAPI.SendMessage
+GreenWallAPI.SendMessage = function() error('protected test failure') end
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'LeftButton')
+assert(api.Status().failed == 1)
+GreenWallAPI.SendMessage = originalSend
+queue()
+WorldFrame.hooks.OnMouseUp(WorldFrame, 'LeftButton')
+assert(sends == before + 3, 'send failure did not stop experiment')
+sync.hooks.OnClick(sync, 'LeftButton')
+assert(sends == before + 4, 'explicit button unavailable after experiment stopped')
+addon.HardwareEcho('frame')
+addon.SetClickTest('status')
+print('Click sources: opt-in isolation, down/up filtering, deduplication, combat and error stop passed.')
